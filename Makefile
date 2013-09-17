@@ -372,6 +372,10 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security \
+		   -Wno-maybe-uninitialized \
+		   -Wno-address \
+		   -Wno-unused-value \
+		   -Wno-array-bounds \
 		   -fno-delete-null-pointer-checks
 
 $(info "======================LINUX INCLUDE===========================================================")

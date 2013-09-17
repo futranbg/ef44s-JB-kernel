@@ -1105,7 +1105,7 @@ static int __init select_freq_plan(u32 pte_efuse_phys)
 		dev_err(drv.dev, "Unable to map QFPROM base\n");
 	}
 	if (tbl_idx == PVS_UNKNOWN) {
-		tbl_idx = PVS_SLOW;
+		tbl_idx = PVS_FASTER;
 		dev_warn(drv.dev, "ACPU PVS: Defaulting to %s\n",
 			 pvs_names[tbl_idx]);
 	} else {
