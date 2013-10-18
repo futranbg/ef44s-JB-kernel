@@ -1085,19 +1085,11 @@ static int __init select_freq_plan(u32 pte_efuse_phys)
 		switch (pvs) {
 		case 0x0:
 		case 0x7:
-			tbl_idx = PVS_SLOW;
-			break;
 		case 0x1:
-			tbl_idx = PVS_NOMINAL;
-			break;
 		case 0x3:
-			tbl_idx = PVS_FAST;
-			break;
 		case 0x4:
-			tbl_idx = PVS_FASTER;
-			break;
 		default:
-			tbl_idx = PVS_UNKNOWN;
+			tbl_idx = PVS_FAST;
 			break;
 		}
 	} else {
@@ -1105,7 +1097,7 @@ static int __init select_freq_plan(u32 pte_efuse_phys)
 		dev_err(drv.dev, "Unable to map QFPROM base\n");
 	}
 	if (tbl_idx == PVS_UNKNOWN) {
-		tbl_idx = PVS_FASTER;
+		tbl_idx = PVS_FAST;
 		dev_warn(drv.dev, "ACPU PVS: Defaulting to %s\n",
 			 pvs_names[tbl_idx]);
 	} else {
