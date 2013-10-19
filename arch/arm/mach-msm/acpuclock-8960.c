@@ -83,6 +83,7 @@ static struct msm_bus_paths bw_level_tbl[] __initdata = {
 	[4] = BW_MBPS(3200), /* At least 400 MHz on bus. */
 	[5] = BW_MBPS(3600), /* At least 450 MHz on bus. */
 	[6] = BW_MBPS(3936), /* At least 492 MHz on bus. */
+	[7] = BW_MBPS(4264), /* At least 533 MHz on bus. */
 };
 
 static struct msm_bus_scale_pdata bus_scale_data __initdata = {
@@ -143,16 +144,16 @@ static struct acpu_level acpu_freq_tbl_slow[] __initdata = {
 	{ 1, {  1458000, HFPLL, 1, 0x36 }, L2(19), 1237500, AVS(0x100018) },
 	{ 1, {  1512000, HFPLL, 1, 0x38 }, L2(19), 1250000, AVS(0x400012) },
 #ifdef CONFIG_CPU_OVERCLOCK
-	{ 1, {  1674000, HFPLL, 1, 0x3A }, L2(19), 1275000 },
+	{ 1, {  1620000, HFPLL, 1, 0x3A }, L2(19), 1275000 },
 	{ 1, {  1728000, HFPLL, 1, 0x3C }, L2(19), 1300000 },
-	{ 1, {  1809000, HFPLL, 1, 0x3E }, L2(19), 1325000 },
+	{ 1, {  1836000, HFPLL, 1, 0x3E }, L2(19), 1325000 },
 	{ 1, {  1890000, HFPLL, 1, 0x40 }, L2(19), 1350000 },
 #endif
 	{ 0, { 0 } }
 };
 
 static struct acpu_level acpu_freq_tbl_nom[] __initdata = {
-	{ 1, {   192000, PLL_8, 0, 0x00 }, L2(0),   900000 },
+	{ 1, {   192000, PLL_8, 0, 0x00 }, L2(0),   800000 },
 	{ 1, {   384000, PLL_8, 0, 0x00 }, L2(1),   900000, AVS(0x40007F) },
 	{ 0, {   432000, HFPLL, 2, 0x20 }, L2(7),   925000 },
 	{ 1, {   486000, HFPLL, 2, 0x24 }, L2(7),   925000 },
@@ -176,9 +177,9 @@ static struct acpu_level acpu_freq_tbl_nom[] __initdata = {
 	{ 1, {  1458000, HFPLL, 1, 0x36 }, L2(19), 1187500, AVS(0x100018) },
 	{ 1, {  1512000, HFPLL, 1, 0x38 }, L2(19), 1200000, AVS(0x400012) },
 #ifdef CONFIG_CPU_OVERCLOCK
-	{ 1, {  1674000, HFPLL, 1, 0x3A }, L2(19), 1225000 },
+	{ 1, {  1620000, HFPLL, 1, 0x3A }, L2(19), 1225000 },
 	{ 1, {  1728000, HFPLL, 1, 0x3C }, L2(19), 1250000 },
-	{ 1, {  1809000, HFPLL, 1, 0x3E }, L2(19), 1275000 },
+	{ 1, {  1836000, HFPLL, 1, 0x3E }, L2(19), 1275000 },
 	{ 1, {  1890000, HFPLL, 1, 0x40 }, L2(19), 1300000 },
 #endif
 	{ 0, { 0 } }
@@ -209,9 +210,9 @@ static struct acpu_level acpu_freq_tbl_fast[] __initdata = {
 	{ 1, {  1458000, HFPLL, 1, 0x36 }, L2(19), 1137500, AVS(0x400012) },
 	{ 1, {  1512000, HFPLL, 1, 0x38 }, L2(19), 1150000, AVS(0x400012) },
 #ifdef CONFIG_CPU_OVERCLOCK
-	{ 1, {  1674000, HFPLL, 1, 0x3A }, L2(19), 1175000 },
+	{ 1, {  1620000, HFPLL, 1, 0x3A }, L2(19), 1175000 },
 	{ 1, {  1728000, HFPLL, 1, 0x3C }, L2(19), 1200000 },
-	{ 1, {  1809000, HFPLL, 1, 0x3E }, L2(19), 1225000 },
+	{ 1, {  1836000, HFPLL, 1, 0x3E }, L2(19), 1225000 },
 	{ 1, {  1890000, HFPLL, 1, 0x40 }, L2(19), 1250000 },	
 #endif	
 	{ 0, { 0 } }
