@@ -378,8 +378,8 @@ int bl_level;
     bl_level = (mfd->bl_level *255)/16;
 
 //20130102_EF44S backlight PWM min duty
-if(bl_level < 31 && bl_level > 0)
-	bl_level = 31;
+if(bl_level < 5 && bl_level > 0)
+	bl_level = 5;
 
 printk("mipi_sony_set_backlight prev_bl_level =%d,mfd->bl_level=%d, bl_level =%d\n",prev_bl_level,mfd->bl_level, bl_level);
 
