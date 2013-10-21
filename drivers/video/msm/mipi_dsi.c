@@ -39,7 +39,10 @@ u32 dsi_irq;
 u32 esc_byte_ratio;
 
 static boolean tlmm_settings = FALSE;
+#ifdef CONFIG_F_SKYDISP_SILENT_BOOT //silent boot p13832@shji 	
 
+extern int backlight_value;
+#endif
 static int mipi_dsi_probe(struct platform_device *pdev);
 static int mipi_dsi_remove(struct platform_device *pdev);
 
@@ -69,6 +72,8 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	struct msm_fb_data_type *mfd;
 	struct msm_panel_info *pinfo;
 
+	pr_debug("%s+:\n", __func__);
+
 	mfd = platform_get_drvdata(pdev);
 	pinfo = &mfd->panel_info;
 
@@ -77,15 +82,14 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	else
 		down(&mfd->dma->mutex);
 
-	mdp4_overlay_dsi_state_set(ST_DSI_SUSPEND);
+	if (mfd->panel_info.type == MIPI_CMD_PANEL) {
+		mipi_dsi_prepare_clocks();
+		mipi_dsi_ahb_ctrl(1);
+		mipi_dsi_clk_enable();
 
-	/* make sure dsi clk is on so that
-	 * dcs commands can be sent
-	 */
-	mipi_dsi_clk_cfg(1);
-
-	/* make sure dsi_cmd_mdp is idle */
-	mipi_dsi_cmd_mdp_busy();
+		/* make sure dsi_cmd_mdp is idle */
+		mipi_dsi_cmd_mdp_busy();
+	}
 
 	/*
 	 * Desctiption: change to DSI_CMD_MODE since it needed to
@@ -129,10 +133,21 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	else
 		up(&mfd->dma->mutex);
 
-	pr_debug("%s-:\n", __func__);
+	pr_debug("End of %s ....:\n", __func__);
 
 	return ret;
 }
+
+#ifdef PANTECH_LCD_BUG_FIX_MDP_BANDWIDTH_REQUEST
+#define OVERLAY_BUS_SCALE_TABLE_BASE    6
+struct mdp4_overlay_perf {
+	u32 mdp_clk_rate;
+	u32 use_ov0_blt;
+	u32 use_ov1_blt;
+	u32 mdp_bw;
+};
+extern struct mdp4_overlay_perf perf_current;
+#endif
 
 static int mipi_dsi_on(struct platform_device *pdev)
 {
@@ -147,6 +162,12 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	u32 ystride, bpp, data;
 	u32 dummy_xres, dummy_yres;
 	int target_type = 0;
+
+#ifdef PANTECH_LCD_BUG_FIX_MDP_BANDWIDTH_REQUEST
+	struct mdp4_overlay_perf *perf_cur = &perf_current;
+#endif
+
+	pr_debug("%s+:\n", __func__);
 
 	mfd = platform_get_drvdata(pdev);
 	fbi = mfd->fbi;
@@ -258,8 +279,17 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	else
 		down(&mfd->dma->mutex);
 
-	if (mfd->op_enable)
-		ret = panel_next_on(pdev);
+#ifdef CONFIG_F_SKYDISP_SILENT_BOOT //silent boot p13832@shji 		
+				if(backlight_value){
+					printk("########## First booting = \n");
+
+				}
+				else
+	ret = panel_next_on(pdev);
+#else
+
+	ret = panel_next_on(pdev);
+#endif
 
 	mipi_dsi_op_mode_config(mipi->mode);
 
@@ -308,20 +338,26 @@ static int mipi_dsi_on(struct platform_device *pdev)
 			}
 			mipi_dsi_set_tear_on(mfd);
 		}
+		mipi_dsi_clk_disable();
+		mipi_dsi_ahb_ctrl(0);
+		mipi_dsi_unprepare_clocks();
 	}
 
 #ifdef CONFIG_MSM_BUS_SCALING
 	mdp_bus_scale_update_request(2);
+#ifdef PANTECH_LCD_BUG_FIX_MDP_BANDWIDTH_REQUEST
+	//pr_info("[LIVED] [0] perf_cur->mdp_bw=%d\n", perf_cur->mdp_bw);
+	perf_cur->mdp_bw = OVERLAY_BUS_SCALE_TABLE_BASE - 2;
+	//pr_info("[LIVED] [1] perf_cur->mdp_bw=%d\n", perf_cur->mdp_bw);
 #endif
-
-	mdp4_overlay_dsi_state_set(ST_DSI_RESUME);
+#endif
 
 	if (mdp_rev >= MDP_REV_41)
 		mutex_unlock(&mfd->dma->ov_mutex);
 	else
 		up(&mfd->dma->mutex);
 
-	pr_debug("%s-:\n", __func__);
+	pr_debug("End of %s....:\n", __func__);
 
 	return ret;
 }
@@ -563,10 +599,8 @@ static int mipi_dsi_probe(struct platform_device *pdev)
 	if (rc)
 		goto mipi_dsi_probe_err;
 
-	if ((dsi_pclk_rate < 3300000) || (dsi_pclk_rate > 223000000)) {
-		pr_err("%s: Pixel clock not supported\n", __func__);
+	if ((dsi_pclk_rate < 3300000) || (dsi_pclk_rate > 103300000))
 		dsi_pclk_rate = 35000000;
-	}
 	mipi->dsi_pclk_rate = dsi_pclk_rate;
 
 	/*

@@ -25,8 +25,6 @@
 #include <linux/debugfs.h>
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
-#include <linux/bug.h>
-#include <linux/ratelimit.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -1498,9 +1496,6 @@ int soc_dpcm_be_dai_trigger(struct snd_soc_pcm_runtime *fe, int stream, int cmd)
 	struct snd_soc_dpcm_params *dpcm_params;
 	int ret = 0;
 
-	if ((cmd == SNDRV_PCM_TRIGGER_PAUSE_RELEASE) ||
-				(cmd == SNDRV_PCM_TRIGGER_PAUSE_PUSH))
-		return ret;
 
 	list_for_each_entry(dpcm_params, &fe->dpcm[stream].be_clients, list_be) {
 
@@ -1769,6 +1764,7 @@ static int soc_dpcm_be_dai_hw_free(struct snd_soc_pcm_runtime *fe, int stream)
 		if ((be->dpcm[stream].state != SND_SOC_DPCM_STATE_HW_PARAMS) &&
 		    (be->dpcm[stream].state != SND_SOC_DPCM_STATE_PREPARE) &&
 			(be->dpcm[stream].state != SND_SOC_DPCM_STATE_HW_FREE) &&
+		    (be->dpcm[stream].state != SND_SOC_DPCM_STATE_PAUSED) &&
 		    (be->dpcm[stream].state != SND_SOC_DPCM_STATE_STOP))
 			continue;
 
@@ -2026,9 +2022,8 @@ int soc_dpcm_runtime_update(struct snd_soc_dapm_widget *widget)
 
 		paths = fe_path_get(fe, SNDRV_PCM_STREAM_PLAYBACK, &list);
 		if (paths < 0) {
-			pr_warn_ratelimited("%s no valid %s route from source to sink\n",
+			dev_warn(fe->dev, "%s no valid %s route from source to sink\n",
 					fe->dai_link->name,  "playback");
-			WARN_ON(1);
 			ret = paths;
 			goto out;
 		}
@@ -2058,7 +2053,7 @@ capture:
 
 		paths = fe_path_get(fe, SNDRV_PCM_STREAM_CAPTURE, &list);
 		if (paths < 0) {
-			pr_warn_ratelimited("%s no valid %s route from source to sink\n",
+			dev_warn(fe->dev, "%s no valid %s route from source to sink\n",
 					fe->dai_link->name,  "capture");
 			ret = paths;
 			goto out;
@@ -2434,7 +2429,7 @@ int soc_dpcm_fe_dai_open(struct snd_pcm_substream *fe_substream)
 	fe->dpcm[stream].runtime = fe_substream->runtime;
 
 	if (fe_path_get(fe, stream, &list) <= 0) {
-		pr_warn_ratelimited("asoc: %s no valid %s route from source to sink\n",
+		dev_warn(fe->dev, "asoc: %s no valid %s route from source to sink\n",
 			fe->dai_link->name, stream ? "capture" : "playback");
 			return -EINVAL;
 	}
@@ -2585,6 +2580,7 @@ int soc_new_pcm(struct snd_soc_pcm_runtime *rtd, int num)
 		rtd->ops.silence	= platform->driver->ops->silence;
 		rtd->ops.page		= platform->driver->ops->page;
 		rtd->ops.mmap		= platform->driver->ops->mmap;
+		rtd->ops.restart	= platform->driver->ops->restart;
 	}
 
 	if (playback)

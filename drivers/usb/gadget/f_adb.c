@@ -28,7 +28,7 @@
 #include <linux/miscdevice.h>
 
 #define ADB_BULK_BUFFER_SIZE           4096
-#define DEBUG 1
+
 /* number of tx requests to allocate */
 #define TX_REQ_MAX 4
 
@@ -48,6 +48,7 @@ struct adb_dev {
 	atomic_t read_excl;
 	atomic_t write_excl;
 	atomic_t open_excl;
+	struct delayed_work adb_release_w;
 
 	struct list_head tx_idle;
 
@@ -409,6 +410,11 @@ static ssize_t adb_write(struct file *fp, const char __user *buf,
 	return r;
 }
 
+static void adb_release_work(struct work_struct *w)
+{
+	adb_closed_callback();
+}
+
 static int adb_open(struct inode *ip, struct file *fp)
 {
 	pr_info("adb_open\n");
@@ -423,7 +429,8 @@ static int adb_open(struct inode *ip, struct file *fp)
 	/* clear the error latch */
 	atomic_set(&_adb_dev->error, 0);
 
-	adb_ready_callback();
+	if (!cancel_delayed_work_sync(&_adb_dev->adb_release_w))
+		adb_ready_callback();
 
 	return 0;
 }
@@ -432,7 +439,16 @@ static int adb_release(struct inode *ip, struct file *fp)
 {
 	pr_info("adb_release\n");
 
-	adb_closed_callback();
+	/*
+	 * When USB cable is plugged out, adb reader is unblocked and
+	 * -EIO is returned to user space. adb daemon reopen the port
+	 * which would disable and enable USB configuration unnecessarily.
+	 *
+	 * Delay notifying the adb close event to android by 1 sec. If
+	 * ADB daemon opens the port with in 1 sec, USB configuration
+	 * re-enable does not happen.
+	 */
+	schedule_delayed_work(&_adb_dev->adb_release_w, msecs_to_jiffies(1000));
 
 	adb_unlock(&_adb_dev->open_excl);
 	return 0;
@@ -552,6 +568,10 @@ static int adb_function_set_alt(struct usb_function *f,
 
 	/* readers may be blocked waiting for us to go online */
 	wake_up(&dev->read_wq);
+
+#ifdef CONFIG_ANDROID_PANTECH_USB_MANAGER
+	usb_interface_enum_cb(ADB_TYPE_FLAG);
+#endif
 	return 0;
 }
 
@@ -608,6 +628,7 @@ static int adb_setup(void)
 	atomic_set(&dev->read_excl, 0);
 	atomic_set(&dev->write_excl, 0);
 
+	INIT_DELAYED_WORK(&dev->adb_release_w, adb_release_work);
 	INIT_LIST_HEAD(&dev->tx_idle);
 
 	_adb_dev = dev;

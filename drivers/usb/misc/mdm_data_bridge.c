@@ -21,7 +21,7 @@
 #include <linux/ratelimit.h>
 #include <mach/usb_bridge.h>
 
-#define MAX_RX_URBS			50
+#define MAX_RX_URBS			100
 #define RMNET_RX_BUFSIZE		2048
 
 #define STOP_SUBMIT_URB_LIMIT		500
@@ -109,25 +109,6 @@ static unsigned int get_timestamp(void);
 static void dbg_timestamp(char *, struct sk_buff *);
 static int submit_rx_urb(struct data_bridge *dev, struct urb *urb,
 		gfp_t flags);
-static void*	interface[MAX_BRIDGE_DEVICES];
-
-static inline int get_chid(struct usb_interface *iface)
-{
-	int	i;
-	for (i = 0; i < MAX_BRIDGE_DEVICES; i++) {
-		if (interface[i] == iface)
-			return i;
-	}
-
-	return -1;
-}
-
-static inline void set_chid(struct usb_interface *iface, int chid)
-{
-	if (chid >= 0 && chid < MAX_BRIDGE_DEVICES) {
-		interface[chid] = iface;
-	}
-}
 
 static inline  bool rx_halted(struct data_bridge *dev)
 {
@@ -981,8 +962,6 @@ bridge_probe(struct usb_interface *iface, const struct usb_device_id *id)
 		goto free_data_bridge;
 	}
 
-	set_chid(iface, ch_id);
-
 	ch_id++;
 
 	return 0;
@@ -1004,26 +983,17 @@ static void bridge_disconnect(struct usb_interface *intf)
 	struct list_head	*head;
 	struct urb		*rx_urb;
 	unsigned long		flags;
-	int			chid;
 
 	if (!dev) {
 		err("%s: data device not found\n", __func__);
 		return;
 	}
 
-	ch_id--;	/* leave it for now */
-
-	chid = get_chid(intf);
-
-	if (chid < 0) {
-		err("%s: invalid interface\n", __func__);
-		return;
-	}
-
-	ctrl_bridge_disconnect(chid);
+	ch_id--;
+	ctrl_bridge_disconnect(dev->id);
 	platform_device_unregister(dev->pdev);
 	usb_set_intfdata(intf, NULL);
-	__dev[chid] = NULL;
+	__dev[dev->id] = NULL;
 
 	cancel_work_sync(&dev->process_rx_w);
 	cancel_work_sync(&dev->kevent);
@@ -1040,8 +1010,6 @@ static void bridge_disconnect(struct usb_interface *intf)
 
 	usb_put_dev(dev->udev);
 	kfree(dev);
-
-	set_chid(NULL, chid);
 }
 
 /*bit position represents interface number*/

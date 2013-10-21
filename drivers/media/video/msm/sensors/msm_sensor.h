@@ -13,6 +13,7 @@
 #ifndef MSM_SENSOR_H
 #define MSM_SENSOR_H
 
+#include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
@@ -22,9 +23,6 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/gpio.h>
 #include <mach/camera.h>
 #include <mach/gpio.h>
 #include <media/msm_camera.h>
@@ -38,12 +36,23 @@
 #define MSM_SENSOR_MCLK_16HZ 16000000
 #define MSM_SENSOR_MCLK_24HZ 24000000
 
-struct gpio_tlmm_cfg {
-	uint32_t gpio;
-	uint32_t dir;
-	uint32_t pull;
-	uint32_t drvstr;
-};
+#if 1//def CONFIG_PANTECH_CAMERA
+#define OV8820_ID 0x88
+#define S5K3H2_ID 0x382B
+#define YACD5C1SBDBC_ID 0xB4
+#define S5K4ECGX_ID 0x5432
+#define MT9V113_ID 0x0167
+
+#define YACD5C1SBDBC_BRIGHTNESS_PARM 2
+#define YACD5C1SBDBC_EFFECT_PARM 8
+#define YACD5C1SBDBC_EXPOSURE_MODE_PARM 17
+#define YACD5C1SBDBC_WB_PARM 8
+#define YACD5C1SBDBC_PREVIEW_FPS_PARM 45//42//57//54//
+#define YACD5C1SBDBC_PREVIEW_24FPS_PARM 116//243
+#define YACD5C1SBDBC_REFLECT_PARM 2
+#define YACD5C1SBDBC_CHECK_ZSL_PARM 4
+
+#endif
 
 enum msm_sensor_reg_update {
 	/* Sensor egisters that need to be updated during initialization */
@@ -97,6 +106,24 @@ struct msm_sensor_reg_t {
 	struct msm_camera_i2c_conf_array *no_effect_settings;
 	struct msm_sensor_output_info_t *output_settings;
 	uint8_t num_conf;
+#ifdef CONFIG_PANTECH_CAMERA
+    struct msm_camera_i2c_reg_conf (*bright_cfg_settings)[YACD5C1SBDBC_BRIGHTNESS_PARM];
+    uint8_t bright_cfg_settings_size;
+    struct msm_camera_i2c_reg_conf (*effect_cfg_settings)[YACD5C1SBDBC_EFFECT_PARM];
+    uint8_t effect_cfg_settings_size;
+    struct msm_camera_i2c_reg_conf (*exposure_mode_cfg_settings)[YACD5C1SBDBC_EXPOSURE_MODE_PARM];
+    uint8_t exposure_mode_cfg_settings_size;
+    struct msm_camera_i2c_reg_conf (*wb_cfg_settings)[YACD5C1SBDBC_WB_PARM];
+    uint8_t wb_cfg_settings_size;
+    struct msm_camera_i2c_reg_conf (*preview_fps_cfg_settings)[YACD5C1SBDBC_PREVIEW_FPS_PARM];
+    uint8_t preview_fps_cfg_settings_size;
+    struct msm_camera_i2c_reg_conf (*preview_24fps_for_motion_detect_cfg_settings)[YACD5C1SBDBC_PREVIEW_24FPS_PARM];
+    uint16_t preview_24fps_for_motion_detect_cfg_settings_size;    
+    struct msm_camera_i2c_reg_conf (*reflect_cfg_settings)[YACD5C1SBDBC_REFLECT_PARM];
+    uint8_t reflect_cfg_settings_size;       
+    struct msm_camera_i2c_reg_conf (*checkzsl_cfg_settings)[YACD5C1SBDBC_CHECK_ZSL_PARM];
+    uint8_t checkzsl_cfg_settings_size;
+#endif
 };
 
 struct v4l2_subdev_info {
@@ -145,10 +172,38 @@ struct msm_sensor_fn_t {
 		(struct msm_sensor_ctrl_t *);
 	int (*sensor_power_up) (struct msm_sensor_ctrl_t *);
 	int32_t (*sensor_match_id)(struct msm_sensor_ctrl_t *s_ctrl);
-	int (*sensor_get_eeprom_data) (struct msm_sensor_ctrl_t *,
-		struct sensor_cfg_data *);
 	int (*sensor_adjust_frame_lines)
 		(struct msm_sensor_ctrl_t *s_ctrl, uint16_t res);
+#ifdef CONFIG_PANTECH_CAMERA_TUNER
+    int (*sensor_set_tuner) (struct tuner_cfg);
+#endif
+#ifdef CONFIG_PANTECH_CAMERA
+    int (*sensor_set_brightness) (struct msm_sensor_ctrl_t *, int8_t); // brightness);
+    int (*sensor_set_effect) (struct msm_sensor_ctrl_t *, int8_t); // effect);
+    int (*sensor_set_exposure_mode) (struct msm_sensor_ctrl_t *, int8_t); // exposure);
+    int (*sensor_set_wb) (struct msm_sensor_ctrl_t *, int8_t); // wb);
+    int (*sensor_set_preview_fps) (struct msm_sensor_ctrl_t *, int8_t); // preview_fps);     
+    int (*sensor_set_auto_focus) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_scene_mode) (struct msm_sensor_ctrl_t *, int8_t); 
+    int (*sensor_set_reflect) (struct msm_sensor_ctrl_t *, int8_t); // reflect);     
+    int (*sensor_set_antibanding) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_antishake) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_led_mode) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_check_af) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_continuous_af) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_focus_rect) (struct msm_sensor_ctrl_t *, int32_t, int8_t * f_info);
+    int (*sensor_set_hdr) (struct msm_sensor_ctrl_t *);
+    int (*sensor_set_metering_area) (struct msm_sensor_ctrl_t *, int32_t, int8_t * f_info);
+    int (*sensor_set_ojt_ctrl) (struct msm_sensor_ctrl_t *, int8_t);
+#if 1 //def F_PANTECH_CAMERA_FIX_CFG_AE_AWB_LOCK
+    int (*sensor_set_aec_lock) (struct msm_sensor_ctrl_t *, int8_t);
+    int (*sensor_set_awb_lock) (struct msm_sensor_ctrl_t *, int8_t);
+#endif
+    int (*sensor_get_frame_info) (struct msm_sensor_ctrl_t *, void __user *argp, int8_t *);
+    int (*sensor_lens_stability) (struct msm_sensor_ctrl_t *);
+    int (*sensor_get_eeprom_data) (struct msm_sensor_ctrl_t *, struct sensor_cfg_data *);//void *);//eeprom
+    int (*sensor_set_focus_mode) (struct msm_sensor_ctrl_t *, int8_t); //FOCUS_MODE
+#endif
 	int32_t (*sensor_get_csi_params)(struct msm_sensor_ctrl_t *,
 		struct csi_lane_params_t *);
 };
@@ -158,17 +213,11 @@ struct msm_sensor_csi_info {
 	uint8_t is_csic;
 };
 
-enum msm_sensor_state {
-	MSM_SENSOR_POWER_UP,
-	MSM_SENSOR_POWER_DOWN,
-};
-
 struct msm_sensor_ctrl_t {
 	struct  msm_camera_sensor_info *sensordata;
 	struct i2c_client *msm_sensor_client;
 	struct i2c_driver *sensor_i2c_driver;
 	struct msm_camera_i2c_client *sensor_i2c_client;
-	struct platform_device *pdev;
 	uint16_t sensor_i2c_addr;
 
 	struct msm_sensor_output_reg_addr_t *sensor_output_reg_addr;
@@ -203,7 +252,6 @@ struct msm_sensor_ctrl_t {
 	struct regulator **reg_ptr;
 	struct clk *cam_clk;
 	long clk_rate;
-	enum msm_sensor_state sensor_state;
 };
 
 void msm_sensor_start_stream(struct msm_sensor_ctrl_t *s_ctrl);
@@ -231,9 +279,6 @@ int32_t msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl);
 int32_t msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl);
 int msm_sensor_i2c_probe(struct i2c_client *client,
 	const struct i2c_device_id *id);
-
-int32_t msm_sensor_platform_probe(struct platform_device *pdev, void *data);
-
 int32_t msm_sensor_power(struct v4l2_subdev *sd, int on);
 
 int32_t msm_sensor_v4l2_s_ctrl(struct v4l2_subdev *sd,
@@ -258,10 +303,7 @@ int msm_sensor_write_res_settings
 int32_t msm_sensor_write_output_settings(struct msm_sensor_ctrl_t *s_ctrl,
 	uint16_t res);
 
-int32_t msm_sensor_adjust_frame_lines1(struct msm_sensor_ctrl_t *s_ctrl,
-	uint16_t res);
-
-int32_t msm_sensor_adjust_frame_lines2(struct msm_sensor_ctrl_t *s_ctrl,
+int32_t msm_sensor_adjust_frame_lines(struct msm_sensor_ctrl_t *s_ctrl,
 	uint16_t res);
 
 int32_t msm_sensor_setting(struct msm_sensor_ctrl_t *s_ctrl,
@@ -278,16 +320,7 @@ long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 int32_t msm_sensor_get_csi_params(struct msm_sensor_ctrl_t *s_ctrl,
 		struct csi_lane_params_t *sensor_output_info);
 
-int32_t msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl);
-
-#ifdef CONFIG_MSM_CAMERA_SENSOR
 struct msm_sensor_ctrl_t *get_sctrl(struct v4l2_subdev *sd);
-#else
-static inline struct msm_sensor_ctrl_t *get_sctrl(struct v4l2_subdev *sd)
-{
-	return NULL;
-}
-#endif
 
 #define VIDIOC_MSM_SENSOR_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 10, void __user *)

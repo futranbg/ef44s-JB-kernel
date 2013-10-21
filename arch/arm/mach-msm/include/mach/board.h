@@ -184,11 +184,10 @@ enum camera_vreg_type {
 	REG_LDO,
 	REG_VS,
 	REG_GPIO,
-	REG_MAX
 };
 
 struct camera_vreg_t {
-	const char *reg_name;
+	char *reg_name;
 	enum camera_vreg_type type;
 	int min_voltage;
 	int max_voltage;
@@ -202,8 +201,8 @@ struct msm_gpio_set_tbl {
 };
 
 struct msm_camera_csi_lane_params {
-	uint16_t csi_lane_assign;
-	uint16_t csi_lane_mask;
+	uint8_t csi_lane_assign;
+	uint8_t csi_lane_mask;
 };
 
 struct msm_camera_gpio_conf {
@@ -408,23 +407,11 @@ struct msm_panel_common_pdata {
 	struct msm_bus_scale_pdata *mdp_bus_scale_table;
 #endif
 	int mdp_rev;
-	void *power_on_set_1;
-	void *power_on_set_2;
-	void *power_on_set_3;
-	ssize_t power_on_set_size_1;
-	ssize_t power_on_set_size_2;
-	ssize_t power_on_set_size_3;
-	void *power_off_set_1;
-	void *power_off_set_2;
-	ssize_t power_off_set_size_1;
-	ssize_t power_off_set_size_2;
 	u32 ov0_wb_size;  /* overlay0 writeback size */
 	u32 ov1_wb_size;  /* overlay1 writeback size */
 	u32 mem_hid;
 	char cont_splash_enabled;
 	char mdp_iommu_split_domain;
-	void (*bl_pwm_disable)(void);
-	int (*bl_on_status)(void);
 };
 
 
@@ -502,7 +489,6 @@ struct msm_fb_platform_data {
 	int (*allow_set_offset)(void);
 	char prim_panel_name[PANEL_NAME_MAX_LEN];
 	char ext_panel_name[PANEL_NAME_MAX_LEN];
-	int (*update_lcdc_lut)(void);
 };
 
 struct msm_hdmi_platform_data {
@@ -607,9 +593,6 @@ void vic_handle_irq(struct pt_regs *regs);
 void msm_8974_reserve(void);
 void msm_8974_very_early(void);
 void msm_8974_init_gpiomux(void);
-void msm9625_init_gpiomux(void);
-void msm_map_mpq8092_io(void);
-void mpq8092_init_gpiomux(void);
 
 struct mmc_platform_data;
 int msm_add_sdcc(unsigned int controller,

@@ -25,10 +25,6 @@
 #include "u_ether.h"
 #include "rndis.h"
 
-static bool rndis_multipacket_dl_disable;
-module_param(rndis_multipacket_dl_disable, bool, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(rndis_multipacket_dl_disable,
-	"Disable RNDIS Multi-packet support in DownLink");
 
 /*
  * This function is an RNDIS Ethernet port -- a Microsoft protocol that's
@@ -473,8 +469,6 @@ static void rndis_command_complete(struct usb_ep *ep, struct usb_request *req)
 				__func__, buf->MaxTransferSize,
 				rndis->port.multi_pkt_xfer ? "enabled" :
 							    "disabled");
-		if (rndis_multipacket_dl_disable)
-			rndis->port.multi_pkt_xfer = 0;
 	}
 //	spin_unlock(&dev->lock);
 }
@@ -621,6 +615,9 @@ static int rndis_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	} else
 		goto fail;
 
+#ifdef CONFIG_ANDROID_PANTECH_USB_MANAGER
+	usb_interface_enum_cb(RNDIS_TYPE_FLAG);
+#endif
 	return 0;
 fail:
 	return -EINVAL;
@@ -685,6 +682,15 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 	struct f_rndis		*rndis = func_to_rndis(f);
 	int			status;
 	struct usb_ep		*ep;
+
+#if defined(CONFIG_ANDROID_PANTECH_USB)
+//	if((pantech_usb_carrier != CARRIER_QUALCOMM) && b_pantech_usb_module){
+	if(pantech_usb_carrier != CARRIER_QUALCOMM){
+		rndis_data_intf.bInterfaceProtocol =  0xFF;
+	}else{
+		rndis_data_intf.bInterfaceProtocol = 0;
+	}
+#endif
 
 	/* allocate instance-specific interface IDs */
 	status = usb_interface_id(c, f);

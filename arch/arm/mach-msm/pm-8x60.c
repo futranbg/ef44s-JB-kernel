@@ -21,12 +21,19 @@
 #include <linux/ktime.h>
 #include <linux/pm.h>
 #include <linux/pm_qos.h>
+#if defined(CONFIG_PANTECH_PMIC)
+#include <linux/proc_fs.h>
+#endif
 #include <linux/smp.h>
 #include <linux/suspend.h>
 #include <linux/tick.h>
+#include <linux/delay.h>
 #include <mach/msm_iomap.h>
 #include <mach/socinfo.h>
 #include <mach/system.h>
+#include <mach/scm.h>
+#include <mach/socinfo.h>
+#include <mach/msm-krait-l2-accessors.h>
 #include <asm/cacheflush.h>
 #include <asm/hardware/gic.h>
 #include <asm/pgtable.h>
@@ -42,11 +49,14 @@
 #include <mach/cpuidle.h>
 #include "idle.h"
 #include "pm.h"
-#include "rpm_resources.h"
 #include "scm-boot.h"
 #include "spm.h"
 #include "timer.h"
 #include "pm-boot.h"
+
+#if defined(CONFIG_PANTECH_PMIC)
+#include "smd_private.h"
+#endif
 
 /******************************************************************************
  * Debug Definitions
@@ -317,6 +327,72 @@ mode_sysfs_add_exit:
 }
 
 /******************************************************************************
+ * CONFIG_MSM_IDLE_STATS
+ *****************************************************************************/
+#if defined(CONFIG_PANTECH_PMIC)
+static oem_pm_smem_vendor1_data_type *smem_id_vendor1_ptr;
+static uint32_t oem_prev_reset=0;  // 20111021 jylee for apanic
+
+static int oem_pm_read_proc_reset_info
+	(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+	int len = 0;
+
+  smem_id_vendor1_ptr = (oem_pm_smem_vendor1_data_type*)smem_alloc(SMEM_ID_VENDOR1,
+                         sizeof(oem_pm_smem_vendor1_data_type));
+
+  len  = sprintf(page, "Power On Reason : 0x%x\n", smem_id_vendor1_ptr->power_on_reason);
+	len += sprintf(page + len, "Power On Mode : %d\n", smem_id_vendor1_ptr->power_on_mode);
+	len += sprintf(page + len, "SilentBoot: %d\n", smem_id_vendor1_ptr->silent_boot_mode);
+	len += sprintf(page + len, "HW Revision: %d\n", smem_id_vendor1_ptr->hw_rev);
+	len += sprintf(page + len, "Reset: %d\n", oem_prev_reset);  // 20111021 jylee for apanic
+	
+	printk(KERN_INFO "Power On Reason : 0x%x\n", smem_id_vendor1_ptr->power_on_reason);
+	printk(KERN_INFO "Power On Mode : %d\n", smem_id_vendor1_ptr->power_on_mode);
+	printk(KERN_INFO "SilentBoot: %d\n", smem_id_vendor1_ptr->silent_boot_mode);
+	printk(KERN_INFO "HW Revision: %d\n", smem_id_vendor1_ptr->hw_rev);
+	printk(KERN_INFO "Reset: %d\n", oem_prev_reset);  // 20111021 jylee for apanic
+	
+	return len;
+}
+
+int oem_pm_write_proc_reset_info
+  (struct file *file, const char *buffer, unsigned long count, void *data)
+{
+	int len;
+	char tbuffer[2];
+
+	if(count > 1 )
+		len = 1;
+	
+	memset(tbuffer, 0x00, 2);
+
+	if(copy_from_user(tbuffer, buffer, len))
+		return -EFAULT;
+	
+	tbuffer[len] = '\0';
+
+	if(tbuffer[0] >= '0' && tbuffer[0] <= '9')
+		oem_prev_reset = tbuffer[0] - '0';
+
+	return len;
+}
+
+int get_hw_revision(void)  // p14527 added for gain hw_revision
+{
+	if(smem_id_vendor1_ptr == NULL)
+	{
+  smem_id_vendor1_ptr = (oem_pm_smem_vendor1_data_type*)smem_alloc(SMEM_ID_VENDOR1,
+                         sizeof(oem_pm_smem_vendor1_data_type));	} 
+
+	return smem_id_vendor1_ptr->hw_rev;
+}
+EXPORT_SYMBOL(get_hw_revision);
+
+#endif
+
+
+/******************************************************************************
  * Configure Hardware before/after Low Power Mode
  *****************************************************************************/
 
@@ -391,10 +467,63 @@ void msm_pm_set_max_sleep_time(int64_t max_sleep_time_ns)
 }
 EXPORT_SYMBOL(msm_pm_set_max_sleep_time);
 
+struct reg_data {
+	uint32_t reg;
+	uint32_t val;
+};
 
-/******************************************************************************
- *
- *****************************************************************************/
+static struct reg_data reg_saved_state[] = {
+	{ .reg = 0x4501, },
+	{ .reg = 0x5501, },
+	{ .reg = 0x6501, },
+	{ .reg = 0x7501, },
+	{ .reg = 0x0500, },
+};
+
+static unsigned int active_vdd;
+static bool msm_pm_save_cp15;
+static const unsigned int pc_vdd = 0x98;
+
+static void msm_pm_save_cpu_reg(void)
+{
+	int i;
+
+	/* Only on core0 */
+	if (smp_processor_id())
+		return;
+
+	/**
+	 * On some targets, L2 PC will turn off may reset the core
+	 * configuration for the mux and the default may not make the core
+	 * happy when it resumes.
+	 * Save the active vdd, and set the core vdd to QSB max vdd, so that
+	 * when the core resumes, it is capable of supporting the current QSB
+	 * rate. Then restore the active vdd before switching the acpuclk rate.
+	 */
+	if (msm_pm_get_l2_flush_flag() == 1) {
+		active_vdd = msm_spm_get_vdd(0);
+		for (i = 0; i < ARRAY_SIZE(reg_saved_state); i++)
+			reg_saved_state[i].val =
+				get_l2_indirect_reg(reg_saved_state[i].reg);
+		msm_spm_set_vdd(0, pc_vdd);
+	}
+}
+
+static void msm_pm_restore_cpu_reg(void)
+{
+	int i;
+
+	/* Only on core0 */
+	if (smp_processor_id())
+		return;
+
+	if (msm_pm_get_l2_flush_flag() == 1) {
+		for (i = 0; i < ARRAY_SIZE(reg_saved_state); i++)
+			set_l2_indirect_reg(reg_saved_state[i].reg,
+					reg_saved_state[i].val);
+		msm_spm_set_vdd(0, active_vdd);
+	}
+}
 
 static void *msm_pm_idle_rs_limits;
 static bool msm_pm_use_qtimer;
@@ -532,7 +661,13 @@ static bool msm_pm_power_collapse(bool from_idle)
 		pr_info("CPU%u: %s: change clock rate (old rate = %lu)\n",
 			cpu, __func__, saved_acpuclk_rate);
 
+	if (msm_pm_save_cp15)
+		msm_pm_save_cpu_reg();
+
 	collapsed = msm_pm_spm_power_collapse(cpu, from_idle, true);
+
+	if (msm_pm_save_cp15)
+		msm_pm_restore_cpu_reg();
 
 	if (cpu_online(cpu)) {
 		if (MSM_PM_DEBUG_CLOCK & msm_pm_debug_mask)
@@ -567,9 +702,12 @@ static bool msm_pm_power_collapse(bool from_idle)
 	return collapsed;
 }
 
-static void msm_pm_qtimer_available(void)
+static void msm_pm_target_init(void)
 {
-	if (machine_is_msm8974())
+	if (cpu_is_apq8064())
+		msm_pm_save_cp15 = true;
+
+	if (cpu_is_msm8974())
 		msm_pm_use_qtimer = true;
 }
 
@@ -591,7 +729,7 @@ static void msm_pm_timer_exit_idle(bool timer_halted)
 
 static int64_t msm_pm_timer_enter_suspend(int64_t *period)
 {
-	int64_t time = 0;
+	int time = 0;
 
 	if (msm_pm_use_qtimer)
 		return sched_clock();
@@ -672,11 +810,6 @@ int msm_pm_idle_prepare(struct cpuidle_device *dev,
 		case MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE:
 			if (!allow)
 				break;
-
-			if (!dev->cpu && msm_rpm_local_request_is_outstanding()) {
-				allow = false;
-				break;
-			}
 			/* fall through */
 
 		case MSM_PM_SLEEP_MODE_RETENTION:
@@ -804,6 +937,23 @@ cpuidle_enter_bail:
 	return 0;
 }
 
+static struct msm_pm_sleep_status_data *msm_pm_slp_sts;
+
+static DEFINE_PER_CPU_SHARED_ALIGNED(enum msm_pm_sleep_mode,
+		msm_pm_last_slp_mode);
+
+bool msm_pm_verify_cpu_pc(unsigned int cpu)
+{
+	enum msm_pm_sleep_mode mode = per_cpu(msm_pm_last_slp_mode, cpu);
+
+	if (msm_pm_slp_sts)
+		if ((mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE) ||
+			(mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE))
+			return true;
+
+	return false;
+}
+
 void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 {
 	int i;
@@ -819,14 +969,54 @@ void msm_pm_cpu_enter_lowpower(unsigned int cpu)
 	if (MSM_PM_DEBUG_HOTPLUG & msm_pm_debug_mask)
 		pr_notice("CPU%u: %s: shutting down cpu\n", cpu, __func__);
 
-	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE])
+	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_POWER_COLLAPSE;
 		msm_pm_power_collapse(false);
-	else if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE])
+	} else if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE;
 		msm_pm_power_collapse_standalone(false);
-	else if (allow[MSM_PM_SLEEP_MODE_RETENTION])
+	} else if (allow[MSM_PM_SLEEP_MODE_RETENTION]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_RETENTION;
 		msm_pm_retention();
-	else
+	} else if (allow[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT]) {
+		per_cpu(msm_pm_last_slp_mode, cpu)
+			= MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT;
 		msm_pm_swfi();
+	} else
+		per_cpu(msm_pm_last_slp_mode, cpu) = MSM_PM_SLEEP_MODE_NR;
+}
+
+int msm_pm_wait_cpu_shutdown(unsigned int cpu)
+{
+
+	int timeout = 10;
+
+	if (!msm_pm_slp_sts)
+		return 0;
+
+	while (timeout--) {
+
+		/*
+		 * Check for the SPM of the core being hotplugged to set
+		 * its sleep state.The SPM sleep state indicates that the
+		 * core has been power collapsed.
+		 */
+
+		int acc_sts = __raw_readl(msm_pm_slp_sts->base_addr
+					+ cpu * msm_pm_slp_sts->cpu_offset);
+		mb();
+
+		if (acc_sts & msm_pm_slp_sts->mask)
+			return 0;
+
+		usleep(100);
+	}
+	pr_warn("%s(): Timed out waiting for CPU %u SPM to enter sleep state",
+			__func__, cpu);
+	return -EBUSY;
 }
 
 static int msm_pm_enter(suspend_state_t state)
@@ -923,6 +1113,12 @@ static struct platform_suspend_ops msm_pm_ops = {
 /******************************************************************************
  * Initialization routine
  *****************************************************************************/
+void __init msm_pm_init_sleep_status_data(
+		struct msm_pm_sleep_status_data *data)
+{
+	msm_pm_slp_sts = data;
+}
+
 void msm_pm_set_sleep_ops(struct msm_pm_sleep_ops *ops)
 {
 	if (ops)
@@ -942,7 +1138,9 @@ static int __init msm_pm_init(void)
 		MSM_PM_STAT_SUSPEND,
 	};
 	unsigned long exit_phys;
-
+#if defined(CONFIG_PANTECH_PMIC)
+  struct proc_dir_entry *oem_pm_power_on_info;
+#endif
 	/* Page table for cores to come back up safely. */
 	pc_pgd = pgd_alloc(&init_mm);
 	if (!pc_pgd)
@@ -980,11 +1178,20 @@ static int __init msm_pm_init(void)
 	clean_caches((unsigned long)&msm_pm_pc_pgd, sizeof(msm_pm_pc_pgd),
 		     virt_to_phys(&msm_pm_pc_pgd));
 
+#if defined(CONFIG_PANTECH_PMIC)
+  oem_pm_power_on_info = create_proc_entry("pantech_resetinfo", S_IRUGO | S_IWUSR | S_IWGRP, NULL);
+
+	if (oem_pm_power_on_info) {
+		oem_pm_power_on_info->read_proc  = oem_pm_read_proc_reset_info;
+		oem_pm_power_on_info->write_proc = oem_pm_write_proc_reset_info;
+		oem_pm_power_on_info->data       = NULL;
+	}
+#endif
 	msm_pm_mode_sysfs_add();
 	msm_pm_add_stats(enable_stats, ARRAY_SIZE(enable_stats));
 
 	suspend_set_ops(&msm_pm_ops);
-	msm_pm_qtimer_available();
+	msm_pm_target_init();
 	msm_cpuidle_init();
 
 	return 0;

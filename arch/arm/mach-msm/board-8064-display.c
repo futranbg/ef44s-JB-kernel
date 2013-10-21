@@ -62,7 +62,6 @@ static struct resource msm_fb_resources[] = {
 #define MIPI_VIDEO_TOSHIBA_WSVGA_PANEL_NAME "mipi_video_toshiba_wsvga"
 #define MIPI_VIDEO_CHIMEI_WXGA_PANEL_NAME "mipi_video_chimei_wxga"
 #define HDMI_PANEL_NAME "hdmi_msm"
-#define MHL_PANEL_NAME "hdmi_msm,mhl_8334"
 #define TVOUT_PANEL_NAME "tvout_msm"
 
 #define LVDS_PIXEL_MAP_PATTERN_1	1
@@ -74,16 +73,9 @@ static unsigned char hdmi_is_primary = 1;
 static unsigned char hdmi_is_primary;
 #endif
 
-static unsigned char mhl_display_enabled;
-
 unsigned char apq8064_hdmi_as_primary_selected(void)
 {
 	return hdmi_is_primary;
-}
-
-unsigned char apq8064_mhl_display_enabled(void)
-{
-	return mhl_display_enabled;
 }
 
 static void set_mdp_clocks_for_wuxga(void);
@@ -468,11 +460,7 @@ static int mipi_dsi_panel_power(int on)
 
 		gpio_set_value_cansleep(gpio36, 0);
 		gpio_set_value_cansleep(gpio25, 1);
-		if (socinfo_get_pmic_model() == PMIC_MODEL_PM8917)
-			gpio_set_value_cansleep(gpio26, 1);
 	} else {
-		if (socinfo_get_pmic_model() == PMIC_MODEL_PM8917)
-			gpio_set_value_cansleep(gpio26, 0);
 		gpio_set_value_cansleep(gpio25, 0);
 		gpio_set_value_cansleep(gpio36, 1);
 
@@ -603,11 +591,7 @@ static int lvds_panel_power(int on)
 
 		gpio_set_value_cansleep(gpio36, 0);
 		gpio_set_value_cansleep(mpp3, 1);
-		if (socinfo_get_pmic_model() == PMIC_MODEL_PM8917)
-			gpio_set_value_cansleep(gpio26, 1);
 	} else {
-		if (socinfo_get_pmic_model() == PMIC_MODEL_PM8917)
-			gpio_set_value_cansleep(gpio26, 0);
 		gpio_set_value_cansleep(mpp3, 0);
 		gpio_set_value_cansleep(gpio36, 1);
 
@@ -633,17 +617,14 @@ static int lvds_panel_power(int on)
 
 static int lvds_pixel_remap(void)
 {
-	u32 ver = socinfo_get_version();
-
 	if (machine_is_apq8064_cdp() ||
 	    machine_is_apq8064_liquid()) {
+		u32 ver = socinfo_get_version();
 		if ((SOCINFO_VERSION_MAJOR(ver) == 1) &&
 		    (SOCINFO_VERSION_MINOR(ver) == 0))
 			return LVDS_PIXEL_MAP_PATTERN_1;
 	} else if (machine_is_mpq8064_dtv()) {
-		if ((SOCINFO_VERSION_MAJOR(ver) == 1) &&
-		    (SOCINFO_VERSION_MINOR(ver) == 0))
-			return LVDS_PIXEL_MAP_PATTERN_2;
+		return LVDS_PIXEL_MAP_PATTERN_2;
 	}
 	return 0;
 }
@@ -1083,15 +1064,7 @@ void __init apq8064_set_display_params(char *prim_panel, char *ext_panel,
 			PANEL_NAME_MAX_LEN);
 		pr_debug("msm_fb_pdata.ext_panel_name %s\n",
 			msm_fb_pdata.ext_panel_name);
-
-		if (!strncmp((char *)msm_fb_pdata.ext_panel_name,
-			MHL_PANEL_NAME, strnlen(MHL_PANEL_NAME,
-				PANEL_NAME_MAX_LEN))) {
-			pr_debug("MHL is external display by boot parameter\n");
-			mhl_display_enabled = 1;
-		}
 	}
 
 	msm_fb_pdata.ext_resolution = resolution;
-	hdmi_msm_data.is_mhl_enabled = mhl_display_enabled;
 }

@@ -180,19 +180,18 @@ int msm_dmov_exec_cmd(unsigned id, unsigned int cmdptr);
 #define DMOV_CE_OUT_CRCI       3
 
 #define DMOV_TSIF_CHAN         2
+//EF45/47/47 use TSIF port 2
+#ifdef CONFIG_SKY_DMB_TSIF_IF
+#define DMOV_TSIF_CRCI         1
+#else
 #define DMOV_TSIF_CRCI         11
+#endif
 
 #define DMOV_HSUART_GSBI6_TX_CHAN	7
 #define DMOV_HSUART_GSBI6_TX_CRCI	6
 
 #define DMOV_HSUART_GSBI6_RX_CHAN	8
 #define DMOV_HSUART_GSBI6_RX_CRCI	11
-
-#define DMOV_HSUART_GSBI8_TX_CHAN	7
-#define DMOV_HSUART_GSBI8_TX_CRCI	10
-
-#define DMOV_HSUART_GSBI8_RX_CHAN	8
-#define DMOV_HSUART_GSBI8_RX_CRCI	9
 
 #define DMOV_HSUART_GSBI9_TX_CHAN	4
 #define DMOV_HSUART_GSBI9_TX_CRCI	13
@@ -268,9 +267,6 @@ int msm_dmov_exec_cmd(unsigned id, unsigned int cmdptr);
 
 #define DMOV8064_CE_OUT_CHAN       1
 #define DMOV8064_CE_OUT_CRCI       15
-
-#define DMOV8064_TSIF_CHAN         2
-#define DMOV8064_TSIF_CRCI         1
 
 
 /* no client rate control ifc (eg, ram) */

@@ -161,6 +161,11 @@ static u32 ddl_encoder_seq_done_callback(struct ddl_context *ddl_context,
 	encoder = &ddl->codec_data.encoder;
 	vidc_1080p_get_encoder_sequence_header_size(
 		&encoder->seq_header_length);
+	if ((encoder->codec.codec == VCD_CODEC_H264) &&
+		(encoder->profile.profile == VCD_PROFILE_H264_BASELINE))
+		if ((encoder->seq_header.align_virtual_addr) &&
+			(encoder->seq_header_length > 6))
+			encoder->seq_header.align_virtual_addr[6] = 0xC0;
 	ddl_context->ddl_callback(VCD_EVT_RESP_START, VCD_S_SUCCESS,
 		NULL, 0, (u32 *) ddl, ddl->client_data);
 	ddl_release_command_channel(ddl_context,
@@ -256,10 +261,6 @@ static u32 ddl_decoder_seq_done_callback(struct ddl_context *ddl_context,
 		DDL_MSG_LOW("HEADER_DONE");
 		vidc_1080p_get_decode_seq_start_result(&seq_hdr_info);
 		parse_hdr_size_data(ddl, &seq_hdr_info);
-		decoder->mp2_datadump_status = 0;
-		vidc_sm_get_mp2datadump_status(&ddl->shared_mem
-			[ddl->command_channel],
-			&decoder->mp2_datadump_status);
 		if (res_trk_get_disable_fullhd() &&
 			(seq_hdr_info.img_size_x * seq_hdr_info.img_size_y >
 				1280 * 720)) {
@@ -274,8 +275,8 @@ static u32 ddl_decoder_seq_done_callback(struct ddl_context *ddl_context,
 		}
 		vidc_sm_get_profile_info(&ddl->shared_mem
 			[ddl->command_channel], &disp_profile_info);
-		disp_profile_info.pic_profile = seq_hdr_info.profile;
-		disp_profile_info.pic_level = seq_hdr_info.level;
+		seq_hdr_info.profile = disp_profile_info.pic_profile;
+		seq_hdr_info.level = disp_profile_info.pic_level;
 		ddl_get_dec_profile_level(decoder, seq_hdr_info.profile,
 			seq_hdr_info.level);
 		switch (decoder->codec.codec) {
@@ -370,6 +371,10 @@ static u32 ddl_decoder_seq_done_callback(struct ddl_context *ddl_context,
 			need_reconfig = ddl_check_reconfig(ddl);
 			DDL_MSG_HIGH("%s : need_reconfig = %u\n", __func__,
 				 need_reconfig);
+			if (input_vcd_frm->flags &
+				  VCD_FRAME_FLAG_EOS) {
+				need_reconfig = false;
+			}
 			if (((input_vcd_frm->flags &
 				VCD_FRAME_FLAG_CODECCONFIG) &&
 				(!(input_vcd_frm->flags &
@@ -1235,10 +1240,6 @@ static u32 ddl_decoder_output_done_callback(
 		vidc_sm_get_metadata_status(&ddl->shared_mem
 			[ddl->command_channel],
 			&decoder->meta_data_exists);
-		decoder->mp2_datadump_status = 0;
-		vidc_sm_get_mp2datadump_status(&ddl->shared_mem
-			[ddl->command_channel],
-			&decoder->mp2_datadump_status);
 		if (decoder->output_order == VCD_DEC_ORDER_DISPLAY) {
 			vidc_sm_get_frame_tags(&ddl->shared_mem
 				[ddl->command_channel],
@@ -1258,6 +1259,8 @@ static u32 ddl_decoder_output_done_callback(
 				output_vcd_frm->flags |=
 					VCD_FRAME_FLAG_DATACORRUPT;
 		}
+		if (decoder->codec.codec != VCD_CODEC_H264)
+			output_vcd_frm->flags &= ~VCD_FRAME_FLAG_DATACORRUPT;
 		output_vcd_frm->ip_frm_tag = dec_disp_info->tag_top;
 		vidc_sm_get_picture_times(&ddl->shared_mem
 			[ddl->command_channel],
@@ -1332,7 +1335,6 @@ static u32 ddl_decoder_output_done_callback(
 		ddl_process_decoder_metadata(ddl);
 		vidc_sm_get_aspect_ratio_info(
 			&ddl->shared_mem[ddl->command_channel],
-			decoder->codec.codec,
 			&output_vcd_frm->aspect_ratio_info);
 		ddl_context->ddl_callback(VCD_EVT_RESP_OUTPUT_DONE,
 			vcd_status, output_frame,

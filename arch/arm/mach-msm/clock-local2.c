@@ -141,12 +141,12 @@ void set_rate_mnd(struct rcg_clk *rcg, struct clk_freq_tbl *nf)
 	rcg_update_config(rcg);
 }
 
-static int rcg_clk_prepare(struct clk *c)
+static int rcg_clk_enable(struct clk *c)
 {
 	struct rcg_clk *rcg = to_rcg_clk(c);
 
 	WARN(rcg->current_freq == &rcg_dummy_freq,
-		"Attempting to prepare %s before setting its rate. "
+		"Attempting to enable %s before setting its rate. "
 		"Set the rate first!\n", rcg->c.dbg_name);
 
 	return 0;
@@ -156,7 +156,7 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 {
 	struct clk_freq_tbl *cf, *nf;
 	struct rcg_clk *rcg = to_rcg_clk(c);
-	int rc;
+	int rc = 0;
 	unsigned long flags;
 
 	for (nf = rcg->freq_tbl; nf->freq_hz != FREQ_END
@@ -168,21 +168,12 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 
 	cf = rcg->current_freq;
 
-	/* Enable source clock dependency for the new freq. */
-	if (c->prepare_count) {
-		rc = clk_prepare(nf->src_clk);
-		if (rc)
-			return rc;
-	}
-
-	spin_lock_irqsave(&c->lock, flags);
-	if (c->count) {
+	if (rcg->c.count) {
+		/* TODO: Modify to use the prepare API */
+		/* Enable source clock dependency for the new freq. */
 		rc = clk_enable(nf->src_clk);
-		if (rc) {
-			spin_unlock_irqrestore(&c->lock, flags);
-			clk_unprepare(nf->src_clk);
-			return rc;
-		}
+		if (rc)
+			goto out;
 	}
 
 	BUG_ON(!rcg->set_rate);
@@ -195,16 +186,12 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
 
 	/* Release source requirements of the old freq. */
-	if (c->count)
+	if (rcg->c.count)
 		clk_disable(cf->src_clk);
-	spin_unlock_irqrestore(&c->lock, flags);
-
-	if (c->prepare_count)
-		clk_unprepare(cf->src_clk);
 
 	rcg->current_freq = nf;
-
-	return 0;
+out:
+	return rc;
 }
 
 /* Return a supported rate that's at least the specified rate. */
@@ -318,11 +305,6 @@ static enum handoff rcg_clk_handoff(struct clk *c)
 	return _rcg_clk_handoff(to_rcg_clk(c), 0);
 }
 
-#define BRANCH_CHECK_MASK	BM(31, 28)
-#define BRANCH_ON_VAL		BVAL(31, 28, 0x0)
-#define BRANCH_OFF_VAL		BVAL(31, 28, 0x8)
-#define BRANCH_NOC_FSM_ON_VAL	BVAL(31, 28, 0x2)
-
 /*
  * Branch clock functions
  */
@@ -344,22 +326,15 @@ static void branch_clk_halt_check(u32 halt_check, const char *clk_name,
 		udelay(HALT_CHECK_DELAY_US);
 	} else if (halt_check == HALT) {
 		int count;
-		u32 val;
 		for (count = HALT_CHECK_MAX_LOOPS; count > 0; count--) {
-			val = readl_relaxed(cbcr_reg);
-			val &= BRANCH_CHECK_MASK;
-			switch (br_status) {
-			case BRANCH_ON:
-				if (val == BRANCH_ON_VAL
-					|| val == BRANCH_NOC_FSM_ON_VAL)
-					return;
-				break;
-
-			case BRANCH_OFF:
-				if (val == BRANCH_OFF_VAL)
-					return;
-				break;
-			};
+			if (br_status == BRANCH_ON
+				&& !(readl_relaxed(cbcr_reg)
+						& CBCR_BRANCH_OFF_BIT))
+				return;
+			if (br_status == BRANCH_OFF
+				&& (readl_relaxed(cbcr_reg)
+						& CBCR_BRANCH_OFF_BIT))
+				return;
 			udelay(1);
 		}
 		WARN(count == 0, "%s status stuck %s", clk_name, status_str);
@@ -593,10 +568,8 @@ static enum handoff local_vote_clk_handoff(struct clk *c)
 	return HANDOFF_ENABLED_CLK;
 }
 
-struct clk_ops clk_ops_empty;
-
 struct clk_ops clk_ops_rcg = {
-	.enable = rcg_clk_prepare,
+	.enable = rcg_clk_enable,
 	.set_rate = rcg_clk_set_rate,
 	.list_rate = rcg_clk_list_rate,
 	.round_rate = rcg_clk_round_rate,
@@ -605,7 +578,7 @@ struct clk_ops clk_ops_rcg = {
 };
 
 struct clk_ops clk_ops_rcg_mnd = {
-	.enable = rcg_clk_prepare,
+	.enable = rcg_clk_enable,
 	.set_rate = rcg_clk_set_rate,
 	.list_rate = rcg_clk_list_rate,
 	.round_rate = rcg_clk_round_rate,

@@ -143,13 +143,6 @@ do { \
 	if (msm_smd_pkt_debug_mask & SMD_PKT_POLL) \
 		pr_info("Poll: "x); \
 } while (0)
-
-#define E_SMD_PKT_SSR(x) \
-do { \
-	if (x->do_reset_notification) \
-		pr_err("%s notifying reset for smd_pkt_dev id:%d\n", \
-			__func__, x->i); \
-} while (0)
 #else
 #define D_STATUS(x...) do {} while (0)
 #define D_READ(x...) do {} while (0)
@@ -157,7 +150,6 @@ do { \
 #define D_READ_DUMP_BUFFER(prestr, cnt, buf) do {} while (0)
 #define D_WRITE_DUMP_BUFFER(prestr, cnt, buf) do {} while (0)
 #define D_POLL(x...) do {} while (0)
-#define E_SMD_PKT_SSR(x) do {} while (0)
 #endif
 
 static ssize_t open_timeout_store(struct device *d,
@@ -318,7 +310,8 @@ ssize_t smd_pkt_read(struct file *file,
 
 	if (smd_pkt_devp->do_reset_notification) {
 		/* notify client that a reset occurred */
-		E_SMD_PKT_SSR(smd_pkt_devp);
+		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
+			__func__, smd_pkt_devp->i);
 		return notify_reset(smd_pkt_devp);
 	}
 	D_READ("Begin %s on smd_pkt_dev id:%d buffer_size %d\n",
@@ -334,7 +327,8 @@ wait_for_packet:
 	mutex_lock(&smd_pkt_devp->rx_lock);
 	if (smd_pkt_devp->has_reset) {
 		mutex_unlock(&smd_pkt_devp->rx_lock);
-		E_SMD_PKT_SSR(smd_pkt_devp);
+		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
+			__func__, smd_pkt_devp->i);
 		return notify_reset(smd_pkt_devp);
 	}
 
@@ -383,7 +377,8 @@ wait_for_packet:
 		if (r < 0) {
 			mutex_unlock(&smd_pkt_devp->rx_lock);
 			if (smd_pkt_devp->has_reset) {
-				E_SMD_PKT_SSR(smd_pkt_devp);
+				pr_err("%s notifying reset for smd_pkt_dev"
+				       " id:%d\n", __func__, smd_pkt_devp->i);
 				return notify_reset(smd_pkt_devp);
 			}
 			pr_err("%s Error while reading %d\n", __func__, r);
@@ -396,7 +391,8 @@ wait_for_packet:
 				   smd_pkt_devp->has_reset);
 		if (smd_pkt_devp->has_reset) {
 			mutex_unlock(&smd_pkt_devp->rx_lock);
-			E_SMD_PKT_SSR(smd_pkt_devp);
+			pr_err("%s notifying reset for smd_pkt_dev  id:%d\n",
+				__func__, smd_pkt_devp->i);
 			return notify_reset(smd_pkt_devp);
 		}
 	} while (pkt_size != bytes_read);
@@ -448,7 +444,8 @@ ssize_t smd_pkt_write(struct file *file,
 	}
 
 	if (smd_pkt_devp->do_reset_notification || smd_pkt_devp->has_reset) {
-		E_SMD_PKT_SSR(smd_pkt_devp);
+		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
+			__func__, smd_pkt_devp->i);
 		/* notify client that a reset occurred */
 		return notify_reset(smd_pkt_devp);
 	}
@@ -487,7 +484,8 @@ ssize_t smd_pkt_write(struct file *file,
 
 		if (smd_pkt_devp->has_reset) {
 			mutex_unlock(&smd_pkt_devp->tx_lock);
-			E_SMD_PKT_SSR(smd_pkt_devp);
+			pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
+				__func__, smd_pkt_devp->i);
 			return notify_reset(smd_pkt_devp);
 		} else {
 			r = smd_write_segment(smd_pkt_devp->ch,
@@ -496,7 +494,9 @@ ssize_t smd_pkt_write(struct file *file,
 			if (r < 0) {
 				mutex_unlock(&smd_pkt_devp->tx_lock);
 				if (smd_pkt_devp->has_reset) {
-					E_SMD_PKT_SSR(smd_pkt_devp);
+					pr_err("%s notifying reset for"
+					       " smd_pkt_dev id:%d\n",
+						__func__, smd_pkt_devp->i);
 					return notify_reset(smd_pkt_devp);
 				}
 				pr_err("%s on smd_pkt_dev id:%d failed r:%d\n",
@@ -532,6 +532,8 @@ static unsigned int smd_pkt_poll(struct file *file, poll_table *wait)
 	mutex_lock(&smd_pkt_devp->ch_lock);
 	if (smd_pkt_devp->has_reset || !smd_pkt_devp->ch) {
 		mutex_unlock(&smd_pkt_devp->ch_lock);
+		pr_err("%s notifying reset for smd_pkt_dev id:%d\n",
+			__func__, smd_pkt_devp->i);
 		return POLLERR;
 	}
 
@@ -723,8 +725,6 @@ static uint32_t smd_ch_edge[] = {
 	SMD_APPS_MODEM,
 };
 #endif
-module_param_named(loopback_edge, smd_ch_edge[LOOPBACK_INX],
-		int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 static int smd_pkt_dummy_probe(struct platform_device *pdev)
 {

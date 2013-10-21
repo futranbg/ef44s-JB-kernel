@@ -895,7 +895,16 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 		case ASM_STREAM_CMD_SET_ENCDEC_PARAM:
 		case ASM_STREAM_CMD_OPEN_WRITE_COMPRESSED:
 		case ASM_STREAM_CMD_OPEN_READ_COMPRESSED:
+/* 2013-02-25 107100J(1743J) Manual CR#434279 merge : Crashed occur during Audio Stability run */
+#ifdef CONFIG_PANTECH_SND
+			if (payload[0] == ASM_STREAM_CMD_CLOSE) {
+				atomic_set(&ac->cmd_close_state, 0);
+				wake_up(&ac->cmd_wait);
+			} else if (atomic_read(&ac->cmd_state) &&
+					wakeup_flag) {
+#else /* QCOM_original 10799J(1742J) */
 			if (atomic_read(&ac->cmd_state) && wakeup_flag) {
+#endif /* CONFIG_PANTECH_SND */
 				atomic_set(&ac->cmd_state, 0);
 				if (payload[1] == ADSP_EUNSUPPORTED) {
 					pr_debug("paload[1]:%d unsupported",
@@ -1382,7 +1391,7 @@ fail_cmd:
 
 
 int q6asm_open_read_compressed(struct audio_client *ac,
-			 uint32_t frames_per_buffer, uint32_t meta_data_mode)
+			 uint32_t format)
 {
 	int rc = 0x00;
 	struct asm_stream_cmd_open_read_compressed open;
@@ -1398,8 +1407,8 @@ int q6asm_open_read_compressed(struct audio_client *ac,
 	q6asm_add_hdr(ac, &open.hdr, sizeof(open), TRUE);
 	open.hdr.opcode = ASM_STREAM_CMD_OPEN_READ_COMPRESSED;
 	/* hardcoded as following*/
-	open.frame_per_buf = frames_per_buffer;
-	open.uMode = meta_data_mode;
+	open.frame_per_buf = 1;
+	open.uMode = 0;
 
 	rc = apr_send_pkt(ac->apr, (uint32_t *) &open);
 	if (rc < 0) {
@@ -2317,12 +2326,12 @@ int q6asm_media_format_block_multi_ch_pcm(struct audio_client *ac,
 		channel_mapping[0] = PCM_CHANNEL_FL;
 		channel_mapping[1] = PCM_CHANNEL_FR;
 	} else if (channels == 6) {
-		channel_mapping[0] = PCM_CHANNEL_FL;
-		channel_mapping[1] = PCM_CHANNEL_FR;
-		channel_mapping[2] = PCM_CHANNEL_FC;
-		channel_mapping[3] = PCM_CHANNEL_LFE;
-		channel_mapping[4] = PCM_CHANNEL_LB;
-		channel_mapping[5] = PCM_CHANNEL_RB;
+		channel_mapping[0] = PCM_CHANNEL_FC;
+		channel_mapping[1] = PCM_CHANNEL_FL;
+		channel_mapping[2] = PCM_CHANNEL_FR;
+		channel_mapping[3] = PCM_CHANNEL_LB;
+		channel_mapping[4] = PCM_CHANNEL_RB;
+		channel_mapping[5] = PCM_CHANNEL_LFE;
 	} else {
 		pr_err("%s: ERROR.unsupported num_ch = %u\n", __func__,
 				channels);
@@ -3380,40 +3389,6 @@ fail_cmd:
 	return -EINVAL;
 }
 
-int q6asm_async_read_compressed(struct audio_client *ac,
-					  struct audio_aio_read_param *param)
-{
-	int rc = 0;
-	struct asm_stream_cmd_read read;
-
-	if (!ac || ac->apr == NULL) {
-		pr_err("%s: APR handle NULL\n", __func__);
-		return -EINVAL;
-	}
-
-	q6asm_add_hdr_async(ac, &read.hdr, sizeof(read), FALSE);
-
-	/* Pass physical address as token for AIO scheme */
-	read.hdr.token = param->paddr;
-	read.hdr.opcode = ASM_DATA_CMD_READ_COMPRESSED;
-	read.buf_add = param->paddr;
-	read.buf_size = param->len;
-	read.uid = param->uid;
-
-	pr_debug("%s: session[%d] bufadd[0x%x]len[0x%x]", __func__, ac->session,
-		read.buf_add, read.buf_size);
-
-	rc = apr_send_pkt(ac->apr, (uint32_t *) &read);
-	if (rc < 0) {
-		pr_debug("[%s] read op[0x%x]rc[%d]\n", __func__,
-			read.hdr.opcode, rc);
-		goto fail_cmd;
-	}
-	return 0;
-fail_cmd:
-	return -EINVAL;
-}
-
 int q6asm_write(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 		uint32_t lsw_ts, uint32_t flags)
 {
@@ -3623,7 +3598,13 @@ int q6asm_cmd(struct audio_client *ac, int cmd)
 	case CMD_CLOSE:
 		pr_debug("%s:CMD_CLOSE\n", __func__);
 		hdr.opcode = ASM_STREAM_CMD_CLOSE;
+/* 2013-02-25 107100J(1743J) Manual CR#434279 merge : Crashed occur during Audio Stability run */
+#ifdef CONFIG_PANTECH_SND
+		atomic_set(&ac->cmd_close_state, 1);
+		state = &ac->cmd_close_state;
+#else /* QCOM_original 10799J(1742J) */
 		state = &ac->cmd_state;
+#endif /* CONFIG_PANTECH_SND */
 		break;
 	default:
 		pr_err("Invalid format[%d]\n", cmd);
@@ -3788,13 +3769,13 @@ static int __init q6asm_init(void)
 #ifdef CONFIG_DEBUG_FS
 	out_buffer = kmalloc(OUT_BUFFER_SIZE, GFP_KERNEL);
 	out_dentry = debugfs_create_file("audio_out_latency_measurement_node",\
-				0664,\
+				S_IFREG | S_IRUGO | S_IWUGO,\
 				NULL, NULL, &audio_output_latency_debug_fops);
 	if (IS_ERR(out_dentry))
 		pr_err("debugfs_create_file failed\n");
 	in_buffer = kmalloc(IN_BUFFER_SIZE, GFP_KERNEL);
 	in_dentry = debugfs_create_file("audio_in_latency_measurement_node",\
-				0664,\
+				S_IFREG | S_IRUGO | S_IWUGO,\
 				NULL, NULL, &audio_input_latency_debug_fops);
 	if (IS_ERR(in_dentry))
 		pr_err("debugfs_create_file failed\n");

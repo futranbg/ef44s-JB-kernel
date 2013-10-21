@@ -121,7 +121,6 @@ struct mmc_data {
 	unsigned int		sg_len;		/* size of scatter list */
 	struct scatterlist	*sg;		/* I/O scatter list */
 	s32			host_cookie;	/* host private data */
-	bool			fault_injected; /* fault injected */
 };
 
 struct mmc_request {
@@ -144,6 +143,14 @@ extern int mmc_is_exception_event(struct mmc_card *, unsigned int);
 extern struct mmc_async_req *mmc_start_req(struct mmc_host *,
 					   struct mmc_async_req *, int *);
 extern int mmc_interrupt_hpi(struct mmc_card *);
+
+/* 20121221 LS1-JHM modified : enabling BKOPS for eMMC performance */
+#ifdef FEATURE_PANTECH_SAMSUNG_EMMC_BUG_FIX
+extern bool mmc_check_r1_state_prg(struct mmc_card *, bool stop);
+extern void mmc_bkops_block_timer_start(struct mmc_host *host, unsigned int timer_expires_msec);
+extern void mmc_bkops_time_info_update(struct mmc_host *host);
+#endif
+
 extern void mmc_wait_for_req(struct mmc_host *, struct mmc_request *);
 extern int mmc_wait_for_cmd(struct mmc_host *, struct mmc_command *, int);
 extern int mmc_app_cmd(struct mmc_host *, struct mmc_card *);

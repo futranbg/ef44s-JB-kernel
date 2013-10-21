@@ -38,8 +38,6 @@
 
 #define WCD9304_RATES (SNDRV_PCM_RATE_8000|SNDRV_PCM_RATE_16000|\
 			SNDRV_PCM_RATE_32000|SNDRV_PCM_RATE_48000)
-#define ADC_DMIC_SEL_ADC	0
-#define	ADC_DMIC_SEL_DMIC	1
 
 #define NUM_DECIMATORS 4
 #define NUM_INTERPOLATORS 3
@@ -814,106 +812,17 @@ static const struct snd_kcontrol_new sb_tx2_mux =
 static const struct snd_kcontrol_new sb_tx1_mux =
 	SOC_DAPM_ENUM("SLIM TX1 MUX Mux", sb_tx1_mux_enum);
 
-static int wcd9304_put_dec_enum(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-	{
-	struct snd_soc_dapm_widget_list *wlist = snd_kcontrol_chip(kcontrol);
-	struct snd_soc_dapm_widget *w = wlist->widgets[0];
-	struct snd_soc_codec *codec = w->codec;
-	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
-	unsigned int dec_mux, decimator;
-	char *dec_name = NULL;
-	char *widget_name = NULL;
-	char *temp;
-	u16 tx_mux_ctl_reg;
-	u8 adc_dmic_sel = 0x0;
-	int ret = 0;
-
-	if (ucontrol->value.enumerated.item[0] > e->max - 1)
-		return -EINVAL;
-
-	dec_mux = ucontrol->value.enumerated.item[0];
-
-	widget_name = kstrndup(w->name, 15, GFP_KERNEL);
-	if (!widget_name)
-		return -ENOMEM;
-	temp = widget_name;
-
-	dec_name = strsep(&widget_name, " ");
-	widget_name = temp;
-	if (!dec_name) {
-		pr_err("%s: Invalid decimator = %s\n", __func__, w->name);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	ret = kstrtouint(strpbrk(dec_name, "1234"), 10, &decimator);
-	if (ret < 0) {
-		pr_err("%s: Invalid decimator = %s\n", __func__, dec_name);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	dev_dbg(w->dapm->dev, "%s(): widget = %s dec_name = %s decimator = %u"\
-		"dec_mux = %u\n", __func__, w->name, dec_name, decimator,
-		dec_mux);
-
-
-	switch (decimator) {
-	case 1:
-	case 2:
-		if ((dec_mux == 1) || (dec_mux == 6))
-			adc_dmic_sel = ADC_DMIC_SEL_DMIC;
-		else
-			adc_dmic_sel = ADC_DMIC_SEL_ADC;
-		break;
-	case 3:
-		if ((dec_mux == 1) || (dec_mux == 6) || (dec_mux == 7))
-			adc_dmic_sel = ADC_DMIC_SEL_DMIC;
-		else
-			adc_dmic_sel = ADC_DMIC_SEL_ADC;
-		break;
-	case 4:
-		if ((dec_mux == 1) || (dec_mux == 5)
-			|| (dec_mux == 6) || (dec_mux == 7))
-			adc_dmic_sel = ADC_DMIC_SEL_DMIC;
-		else
-			adc_dmic_sel = ADC_DMIC_SEL_ADC;
-		break;
-	default:
-		pr_err("%s: Invalid Decimator = %u\n", __func__, decimator);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	tx_mux_ctl_reg = SITAR_A_CDC_TX1_MUX_CTL + 8 * (decimator - 1);
-
-	snd_soc_update_bits(codec, tx_mux_ctl_reg, 0x1, adc_dmic_sel);
-
-	ret = snd_soc_dapm_put_enum_double(kcontrol, ucontrol);
-out:
-	kfree(widget_name);
-	return ret;
-}
-
-#define WCD9304_DEC_ENUM(xname, xenum) \
-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
-	.info = snd_soc_info_enum_double, \
-	.get = snd_soc_dapm_get_enum_double, \
-	.put = wcd9304_put_dec_enum, \
-	.private_value = (unsigned long)&xenum }
-
 static const struct snd_kcontrol_new dec1_mux =
-	WCD9304_DEC_ENUM("DEC1 MUX Mux", dec1_mux_enum);
+	SOC_DAPM_ENUM("DEC1 MUX Mux", dec1_mux_enum);
 
 static const struct snd_kcontrol_new dec2_mux =
-	WCD9304_DEC_ENUM("DEC2 MUX Mux", dec2_mux_enum);
+	SOC_DAPM_ENUM("DEC2 MUX Mux", dec2_mux_enum);
 
 static const struct snd_kcontrol_new dec3_mux =
-	WCD9304_DEC_ENUM("DEC3 MUX Mux", dec3_mux_enum);
+	SOC_DAPM_ENUM("DEC3 MUX Mux", dec3_mux_enum);
 
 static const struct snd_kcontrol_new dec4_mux =
-	WCD9304_DEC_ENUM("DEC4 MUX Mux", dec4_mux_enum);
+	SOC_DAPM_ENUM("DEC4 MUX Mux", dec4_mux_enum);
 
 static const struct snd_kcontrol_new iir1_inp1_mux =
 	SOC_DAPM_ENUM("IIR1 INP1 Mux", iir1_inp1_mux_enum);
@@ -943,14 +852,14 @@ static void sitar_codec_enable_adc_block(struct snd_soc_codec *codec,
 
 	if (enable) {
 		sitar->adc_count++;
-		snd_soc_update_bits(codec, SITAR_A_CDC_CLK_OTHR_CTL,
-				0x02, 0x02);
+		snd_soc_update_bits(codec, SITAR_A_TX_COM_BIAS, 0xE0, 0xE0);
+
 	} else {
 		sitar->adc_count--;
 		if (!sitar->adc_count) {
 			if (!sitar->mbhc_polling_active)
-				snd_soc_update_bits(codec,
-					SITAR_A_CDC_CLK_OTHR_CTL, 0xE0, 0x0);
+				snd_soc_update_bits(codec, SITAR_A_TX_COM_BIAS,
+					0xE0, 0x0);
 		}
 	}
 }
@@ -1061,7 +970,7 @@ static int sitar_codec_enable_dmic(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
 	struct snd_soc_codec *codec = w->codec;
-	u16 tx_dmic_ctl_reg;
+	u16 tx_dmic_ctl_reg, tx_mux_ctl_reg;
 	u8 dmic_clk_sel, dmic_clk_en;
 	unsigned int dmic;
 	int ret;
@@ -1091,12 +1000,15 @@ static int sitar_codec_enable_dmic(struct snd_soc_dapm_widget *w,
 		return -EINVAL;
 	}
 
+	tx_mux_ctl_reg = SITAR_A_CDC_TX1_MUX_CTL + 8 * (dmic - 1);
 	tx_dmic_ctl_reg = SITAR_A_CDC_TX1_DMIC_CTL + 8 * (dmic - 1);
 
 	pr_debug("%s %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
+		snd_soc_update_bits(codec, tx_mux_ctl_reg, 0x01, 0x01);
+
 		snd_soc_update_bits(codec, SITAR_A_CDC_CLK_DMIC_CTL,
 				dmic_clk_sel, dmic_clk_sel);
 
@@ -1108,6 +1020,8 @@ static int sitar_codec_enable_dmic(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMD:
 		snd_soc_update_bits(codec, SITAR_A_CDC_CLK_DMIC_CTL,
 				dmic_clk_en, 0);
+
+		snd_soc_update_bits(codec, tx_mux_ctl_reg, 0x01, 0x00);
 		break;
 	}
 	return 0;
@@ -4976,6 +4890,7 @@ static const struct sitar_reg_mask_val sitar_1_1_reg_defaults[] = {
 	SITAR_REG_VAL(SITAR_A_CDC_RX1_B6_CTL, 0x80),
 
 	SITAR_REG_VAL(SITAR_A_CDC_CLSG_FREQ_THRESH_B3_CTL, 0x1B),
+	SITAR_REG_VAL(SITAR_A_CDC_CLSG_FREQ_THRESH_B4_CTL, 0x5B),
 
 };
 
@@ -5006,10 +4921,6 @@ static const struct sitar_reg_mask_val sitar_codec_reg_init_val[] = {
 	{SITAR_A_RX_HPH_R_GAIN, 0x10, 0x10},
 	{SITAR_A_RX_LINE_1_GAIN, 0x10, 0x10},
 	{SITAR_A_RX_LINE_2_GAIN, 0x10, 0x10},
-
-	/* Set the MICBIAS default output as pull down*/
-	{SITAR_A_MICB_1_CTL, 0x01, 0x01},
-	{SITAR_A_MICB_2_CTL, 0x01, 0x01},
 
 	/* Initialize mic biases to differential mode */
 	{SITAR_A_MICB_1_INT_RBIAS, 0x24, 0x24},

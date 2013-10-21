@@ -181,14 +181,14 @@ static int __init consistent_init(void)
 
 		pud = pud_alloc(&init_mm, pgd, base);
 		if (!pud) {
-			pr_err("%s: no pud tables\n", __func__);
+			printk(KERN_ERR "%s: no pud tables\n", __func__);
 			ret = -ENOMEM;
 			break;
 		}
 
 		pmd = pmd_alloc(&init_mm, pud, base);
 		if (!pmd) {
-			pr_err("%s: no pmd tables\n", __func__);
+			printk(KERN_ERR "%s: no pmd tables\n", __func__);
 			ret = -ENOMEM;
 			break;
 		}
@@ -196,7 +196,7 @@ static int __init consistent_init(void)
 
 		pte = pte_alloc_kernel(pmd, base);
 		if (!pte) {
-			pr_err("%s: no pte tables\n", __func__);
+			printk(KERN_ERR "%s: no pte tables\n", __func__);
 			ret = -ENOMEM;
 			break;
 		}
@@ -311,7 +311,7 @@ __dma_alloc_remap(struct page *page, size_t size, gfp_t gfp, pgprot_t prot,
 	int bit;
 
 	if (!consistent_pte) {
-		pr_err("%s: not initialised\n", __func__);
+		printk(KERN_ERR "%s: not initialised\n", __func__);
 		dump_stack();
 		return NULL;
 	}
@@ -370,14 +370,14 @@ static void __dma_free_remap(void *cpu_addr, size_t size)
 
 	c = arm_vmregion_find_remove(&consistent_head, (unsigned long)cpu_addr);
 	if (!c) {
-		pr_err("%s: trying to free invalid coherent area: %p\n",
+		printk(KERN_ERR "%s: trying to free invalid coherent area: %p\n",
 		       __func__, cpu_addr);
 		dump_stack();
 		return;
 	}
 
 	if ((c->vm_end - c->vm_start) != size) {
-		pr_err("%s: freeing wrong coherent size (%ld != %d)\n",
+		printk(KERN_ERR "%s: freeing wrong coherent size (%ld != %d)\n",
 		       __func__, c->vm_end - c->vm_start, size);
 		dump_stack();
 		size = c->vm_end - c->vm_start;
@@ -399,8 +399,8 @@ static void __dma_free_remap(void *cpu_addr, size_t size)
 		}
 
 		if (pte_none(pte) || !pte_present(pte))
-			pr_crit("%s: bad page in kernel page table\n",
-				__func__);
+			printk(KERN_CRIT "%s: bad page in kernel page table\n",
+			       __func__);
 	} while (size -= PAGE_SIZE);
 
 	flush_tlb_kernel_range(c->vm_start, c->vm_end);
@@ -584,7 +584,7 @@ static void *__dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 	 */
 	gfp &= ~(__GFP_COMP);
 
-	*handle = DMA_ERROR_CODE;
+	*handle = ~0;
 	size = PAGE_ALIGN(size);
 
 	if (arch_is_coherent() || nommu())
@@ -639,10 +639,6 @@ static int dma_mmap(struct device *dev, struct vm_area_struct *vma,
 	int ret = -ENXIO;
 #ifdef CONFIG_MMU
 	unsigned long pfn = dma_to_pfn(dev, dma_addr);
-
-	if (dma_mmap_from_coherent(dev, vma, cpu_addr, size, &ret))
-		return ret;
-
 	ret = remap_pfn_range(vma, vma->vm_start,
 			      pfn + vma->vm_pgoff,
 			      vma->vm_end - vma->vm_start,
@@ -748,25 +744,28 @@ static void dma_cache_maint_page(struct page *page, unsigned long offset,
 	size_t size, enum dma_data_direction dir,
 	void (*op)(const void *, size_t, int))
 {
+	unsigned long pfn;
+	size_t left = size;
+	pfn = page_to_pfn(page) + offset / PAGE_SIZE;
+	offset %= PAGE_SIZE;
+	
 	/*
 	 * A single sg entry may refer to multiple physically contiguous
 	 * pages.  But we still need to process highmem pages individually.
 	 * If highmem is not configured then the bulk of this loop gets
 	 * optimized out.
 	 */
-	size_t left = size;
+
 	do {
 		size_t len = left;
 		void *vaddr;
 
+                page = pfn_to_page(pfn);
+                
 		if (PageHighMem(page)) {
-			if (len + offset > PAGE_SIZE) {
-				if (offset >= PAGE_SIZE) {
-					page += offset / PAGE_SIZE;
-					offset %= PAGE_SIZE;
-				}
+			if (len + offset > PAGE_SIZE)
 				len = PAGE_SIZE - offset;
-			}
+
 			vaddr = kmap_high_get(page);
 			if (vaddr) {
 				vaddr += offset;
@@ -783,7 +782,7 @@ static void dma_cache_maint_page(struct page *page, unsigned long offset,
 			op(vaddr, len, dir);
 		}
 		offset = 0;
-		page++;
+		pfn++;
 		left -= len;
 	} while (left);
 }
@@ -902,7 +901,7 @@ void dma_sync_sg_for_cpu(struct device *dev, struct scatterlist *sg,
 	int i;
 
 	for_each_sg(sg, s, nents, i) {
-		if (!dmabounce_sync_for_cpu(dev, sg_dma_address(s),
+		if (!dmabounce_sync_for_cpu(dev, sg_dma_address(s), 0,
 					    sg_dma_len(s), dir))
 			continue;
 
@@ -928,7 +927,7 @@ void dma_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
 	int i;
 
 	for_each_sg(sg, s, nents, i) {
-		if (!dmabounce_sync_for_device(dev, sg_dma_address(s),
+		if (!dmabounce_sync_for_device(dev, sg_dma_address(s), 0,
 					sg_dma_len(s), dir))
 			continue;
 

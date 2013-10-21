@@ -15,7 +15,7 @@
 #include <mach/qdsp6v2/apr.h>
 #include <sound/apr_audio.h>
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
-#include <linux/msm_ion.h>
+#include <linux/ion.h>
 #endif
 
 #define IN                      0x000
@@ -150,6 +150,11 @@ struct audio_client {
 	struct mutex	       cmd_lock;
 
 	atomic_t		cmd_state;
+/* 2013-02-25 107100J(1743J) Manual CR#434279 merge : Crashed occur during Audio Stability run 
+    Device crashes when Audio Stability is run, and where commands of Volume and Close are sent consecutively*/
+#ifdef CONFIG_PANTECH_SND
+	atomic_t		cmd_close_state;
+#endif
 	atomic_t		time_flag;
 	atomic_t		nowait_cmd_cnt;
 	wait_queue_head_t	cmd_wait;
@@ -185,8 +190,7 @@ int q6asm_audio_client_buf_free_contiguous(unsigned int dir,
 int q6asm_open_read(struct audio_client *ac, uint32_t format);
 int q6asm_open_read_v2_1(struct audio_client *ac, uint32_t format);
 
-int q6asm_open_read_compressed(struct audio_client *ac,
-			 uint32_t frames_per_buffer, uint32_t meta_data_mode);
+int q6asm_open_read_compressed(struct audio_client *ac, uint32_t format);
 
 int q6asm_open_write(struct audio_client *ac, uint32_t format);
 
@@ -205,9 +209,6 @@ int q6asm_async_write(struct audio_client *ac,
 					  struct audio_aio_write_param *param);
 
 int q6asm_async_read(struct audio_client *ac,
-					  struct audio_aio_read_param *param);
-
-int q6asm_async_read_compressed(struct audio_client *ac,
 					  struct audio_aio_read_param *param);
 
 int q6asm_read(struct audio_client *ac);

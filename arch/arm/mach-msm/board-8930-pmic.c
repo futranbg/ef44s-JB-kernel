@@ -214,7 +214,8 @@ static struct pm8921_charger_platform_data pm8921_chg_pdata __devinitdata = {
 	.max_voltage		= MAX_VOLTAGE_MV,
 	.min_voltage		= 3200,
 	.uvd_thresh_voltage	= 4050,
-	.resume_voltage_delta	= 100,
+	.resume_voltage_delta	= 60,
+	.resume_charge_percent	= 99,
 	.term_current		= CHG_TERM_MA,
 	.cool_temp		= 10,
 	.warm_temp		= 40,
@@ -395,8 +396,8 @@ void __init msm8930_init_pmic(void)
 				&msm8930_ssbi_pm8038_pdata;
 	pm8038_platform_data.num_regulators
 		= msm8930_pm8038_regulator_pdata_len;
-	if (machine_is_apq8064_mtp())
+	if (machine_is_msm8930_mtp())
 		pm8921_bms_pdata.battery_type = BATT_PALLADIUM;
-	else if (machine_is_apq8064_liquid())
-		pm8921_bms_pdata.battery_type = BATT_DESAY;
+	else if (machine_is_msm8930_cdp())
+		pm8921_chg_pdata.has_dc_supply = true;
 }

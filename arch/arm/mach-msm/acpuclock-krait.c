@@ -11,6 +11,8 @@
  * GNU General Public License for more details.
  */
 
+#define PANTECH_ACPUPVS    //P14527: add
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -36,13 +38,34 @@
 
 #include "acpuclock.h"
 #include "acpuclock-krait.h"
+#include "avs.h"
+
+#if defined(CONFIG_PANTECH_PMIC)
+#include <mach/msm_smsm.h>
+#endif
+
+#if defined(PANTECH_ACPUPVS)
+#include <linux/proc_fs.h>
+#endif
 
 /* MUX source selects. */
 #define PRI_SRC_SEL_SEC_SRC	0
 #define PRI_SRC_SEL_HFPLL	1
 #define PRI_SRC_SEL_HFPLL_DIV2	2
-#define SEC_SRC_SEL_L2PLL	1
-#define SEC_SRC_SEL_AUX		2
+
+#define SECCLKAGD		BIT(4)
+
+#if defined(PANTECH_ACPUPVS)
+char acpupvs[30] = {0,};
+struct proc_dir_entry *acpu_pvs_info;
+  #ifdef F_PANTECH_SECBOOT
+#define STE_EFUSE_OFFSET   0x0250
+  #endif
+#endif
+
+/*-> 20130108 yjw for improving booting speed*/
+static int cpu0_khz_during_booting = 0;
+/*20130108 yjw for improving booting speed <-*/
 
 static DEFINE_MUTEX(driver_lock);
 static DEFINE_SPINLOCK(l2_lock);
@@ -78,14 +101,24 @@ static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
 }
 
 /* Select a source on the secondary MUX. */
-static void set_sec_clk_src(struct scalable *sc, u32 sec_src_sel)
+static void __cpuinit set_sec_clk_src(struct scalable *sc, u32 sec_src_sel)
 {
 	u32 regval;
 
+	/* 8064 Errata: disable sec_src clock gating during switch. */
 	regval = get_l2_indirect_reg(sc->l2cpmr_iaddr);
+	regval |= SECCLKAGD;
+	set_l2_indirect_reg(sc->l2cpmr_iaddr, regval);
+
+	/* Program the MUX */
 	regval &= ~(0x3 << 2);
 	regval |= ((sec_src_sel & 0x3) << 2);
 	set_l2_indirect_reg(sc->l2cpmr_iaddr, regval);
+
+	/* 8064 Errata: re-enabled sec_src clock gating. */
+	regval &= ~SECCLKAGD;
+	set_l2_indirect_reg(sc->l2cpmr_iaddr, regval);
+
 	/* Wait for switch to complete. */
 	mb();
 	udelay(1);
@@ -166,19 +199,8 @@ static void hfpll_disable(struct scalable *sc, bool skip_regulators)
 /* Program the HFPLL rate. Assumes HFPLL is already disabled. */
 static void hfpll_set_rate(struct scalable *sc, const struct core_speed *tgt_s)
 {
-	void __iomem *base = sc->hfpll_base;
-	u32 regval;
-
-	writel_relaxed(tgt_s->pll_l_val, base + drv.hfpll_data->l_offset);
-
-	if (drv.hfpll_data->has_user_reg) {
-		regval = readl_relaxed(base + drv.hfpll_data->user_offset);
-		if (tgt_s->pll_l_val <= drv.hfpll_data->low_vco_l_max)
-			regval &= ~drv.hfpll_data->user_vco_mask;
-		else
-			regval |= drv.hfpll_data->user_vco_mask;
-		writel_relaxed(regval, base  + drv.hfpll_data->user_offset);
-	}
+	writel_relaxed(tgt_s->pll_l_val,
+		sc->hfpll_base + drv.hfpll_data->l_offset);
 }
 
 /* Return the L2 speed that should be applied. */
@@ -211,15 +233,11 @@ static void set_speed(struct scalable *sc, const struct core_speed *tgt_s)
 {
 	const struct core_speed *strt_s = sc->cur_speed;
 
-	if (strt_s == tgt_s)
-		return;
-
 	if (strt_s->src == HFPLL && tgt_s->src == HFPLL) {
 		/*
 		 * Move to an always-on source running at a frequency
 		 * that does not require an elevated CPU voltage.
 		 */
-		set_sec_clk_src(sc, SEC_SRC_SEL_AUX);
 		set_pri_clk_src(sc, PRI_SRC_SEL_SEC_SRC);
 
 		/* Re-program HFPLL. */
@@ -230,15 +248,12 @@ static void set_speed(struct scalable *sc, const struct core_speed *tgt_s)
 		/* Move to HFPLL. */
 		set_pri_clk_src(sc, tgt_s->pri_src_sel);
 	} else if (strt_s->src == HFPLL && tgt_s->src != HFPLL) {
-		set_sec_clk_src(sc, tgt_s->sec_src_sel);
 		set_pri_clk_src(sc, tgt_s->pri_src_sel);
 		hfpll_disable(sc, false);
 	} else if (strt_s->src != HFPLL && tgt_s->src == HFPLL) {
 		hfpll_set_rate(sc, tgt_s);
 		hfpll_enable(sc, false);
 		set_pri_clk_src(sc, tgt_s->pri_src_sel);
-	} else {
-		set_sec_clk_src(sc, tgt_s->sec_src_sel);
 	}
 
 	sc->cur_speed = tgt_s;
@@ -469,6 +484,12 @@ static int acpuclk_krait_set_rate(int cpu, unsigned long rate,
 	vdd_data.vdd_core = calculate_vdd_core(tgt);
 	vdd_data.ua_core = tgt->ua_core;
 
+	/* Disable AVS before voltage switch */
+	if (reason == SETRATE_CPUFREQ && drv.scalable[cpu].avs_enabled) {
+		AVS_DISABLE(cpu);
+		drv.scalable[cpu].avs_enabled = false;
+	}
+
 	/* Increase VDD levels if needed. */
 	if (reason == SETRATE_CPUFREQ || reason == SETRATE_HOTPLUG) {
 		rc = increase_vdd(cpu, &vdd_data, reason);
@@ -504,6 +525,12 @@ static int acpuclk_krait_set_rate(int cpu, unsigned long rate,
 	/* Drop VDD levels if we can. */
 	decrease_vdd(cpu, &vdd_data, reason);
 
+	/* Re-enable AVS */
+	if (reason == SETRATE_CPUFREQ && tgt->avsdscr_setting) {
+		AVS_ENABLE(cpu, tgt->avsdscr_setting);
+		drv.scalable[cpu].avs_enabled = true;
+	}
+
 	dev_dbg(drv.dev, "ACPU%d speed change complete\n", cpu);
 
 out:
@@ -518,7 +545,7 @@ static struct acpuclk_data acpuclk_krait_data = {
 };
 
 /* Initialize a HFPLL at a given rate and enable it. */
-static void __cpuinit hfpll_init(struct scalable *sc,
+static void __init hfpll_init(struct scalable *sc,
 			      const struct core_speed *tgt_s)
 {
 	dev_dbg(drv.dev, "Initializing HFPLL%d\n", sc - drv.scalable);
@@ -531,9 +558,6 @@ static void __cpuinit hfpll_init(struct scalable *sc,
 		       sc->hfpll_base + drv.hfpll_data->config_offset);
 	writel_relaxed(0, sc->hfpll_base + drv.hfpll_data->m_offset);
 	writel_relaxed(1, sc->hfpll_base + drv.hfpll_data->n_offset);
-	if (drv.hfpll_data->has_user_reg)
-		writel_relaxed(drv.hfpll_data->user_val,
-			       sc->hfpll_base + drv.hfpll_data->user_offset);
 
 	/* Program droop controller, if supported */
 	if (drv.hfpll_data->has_droop_ctl)
@@ -696,7 +720,7 @@ static int __cpuinit init_clock_sources(struct scalable *sc,
 	}
 
 	/* Switch away from the HFPLL while it's re-initialized. */
-	set_sec_clk_src(sc, SEC_SRC_SEL_AUX);
+	set_sec_clk_src(sc, sc->sec_clk_sel);
 	set_pri_clk_src(sc, PRI_SRC_SEL_SEC_SRC);
 	hfpll_init(sc, tgt_s);
 
@@ -706,7 +730,6 @@ static int __cpuinit init_clock_sources(struct scalable *sc,
 	set_l2_indirect_reg(sc->l2cpmr_iaddr, regval);
 
 	/* Switch to the target clock source. */
-	set_sec_clk_src(sc, tgt_s->sec_src_sel);
 	set_pri_clk_src(sc, tgt_s->pri_src_sel);
 	sc->cur_speed = tgt_s;
 
@@ -717,7 +740,6 @@ static void __cpuinit fill_cur_core_speed(struct core_speed *s,
 					  struct scalable *sc)
 {
 	s->pri_src_sel = get_l2_indirect_reg(sc->l2cpmr_iaddr) & 0x3;
-	s->sec_src_sel = (get_l2_indirect_reg(sc->l2cpmr_iaddr) >> 2) & 0x3;
 	s->pll_l_val = readl_relaxed(sc->hfpll_base + drv.hfpll_data->l_offset);
 }
 
@@ -725,9 +747,29 @@ static bool __cpuinit speed_equal(const struct core_speed *s1,
 				  const struct core_speed *s2)
 {
 	return (s1->pri_src_sel == s2->pri_src_sel &&
-		s1->sec_src_sel == s2->sec_src_sel &&
 		s1->pll_l_val == s2->pll_l_val);
 }
+
+#if defined(CONFIG_PANTECH_PMIC)
+static oem_pm_smem_vendor1_data_type *smem_vendor1_ptr = NULL;
+
+static int oem_smem_boot_mode_read(void)
+{
+	if (!smem_vendor1_ptr)
+		return 1;
+
+	return smem_vendor1_ptr->power_on_mode;
+}
+
+static int oem_vendor_smem_init(void)
+{
+	int len = 0;
+
+	smem_vendor1_ptr = (oem_pm_smem_vendor1_data_type*)smem_alloc(SMEM_ID_VENDOR1, sizeof(oem_pm_smem_vendor1_data_type));
+
+	return len;
+}
+#endif
 
 static const struct acpu_level __cpuinit *find_cur_acpu_level(int cpu)
 {
@@ -736,9 +778,22 @@ static const struct acpu_level __cpuinit *find_cur_acpu_level(int cpu)
 	struct core_speed cur_speed;
 
 	fill_cur_core_speed(&cur_speed, sc);
+#if defined(CONFIG_PANTECH_PMIC)
+	for (l = drv.acpu_freq_tbl; l->speed.khz != 0; l++){
+		if (oem_smem_boot_mode_read()){
+			if (speed_equal(&l->speed, &cur_speed))
+				return l;			
+		}
+		else{
+			return NULL;
+		}
+	}
+#else
 	for (l = drv.acpu_freq_tbl; l->speed.khz != 0; l++)
 		if (speed_equal(&l->speed, &cur_speed))
 			return l;
+#endif		
+		
 	return NULL;
 }
 
@@ -766,6 +821,19 @@ static const struct acpu_level __cpuinit *find_min_acpu_level(void)
 	return NULL;
 }
 
+/*-> 20130108 yjw for improving booting speed*/
+static const struct acpu_level __cpuinit *find_max_acpu_level(void)
+{
+	struct acpu_level *l;
+
+	for (l = drv.acpu_freq_tbl; l->speed.khz != 0; l++)
+		if (l->speed.khz == 1512000)
+			return l;
+
+	return NULL;
+}
+/*20130108 yjw for improving booting speed <-*/	
+
 static int __cpuinit per_cpu_init(int cpu)
 {
 	struct scalable *sc = &drv.scalable[cpu];
@@ -779,9 +847,13 @@ static int __cpuinit per_cpu_init(int cpu)
 	}
 
 	acpu_level = find_cur_acpu_level(cpu);
+	
 	if (!acpu_level) {
 		acpu_level = find_min_acpu_level();
-		if (!acpu_level) {
+/*-> 20130108 yjw for improving booting speed*/
+                cpu0_khz_during_booting = 0;
+/*20130108 yjw for improving booting speed <-*/	
+	if (!acpu_level) {
 			ret = -ENODEV;
 			goto err_table;
 		}
@@ -791,6 +863,19 @@ static int __cpuinit per_cpu_init(int cpu)
 		dev_dbg(drv.dev, "CPU%d is running at %lu KHz\n", cpu,
 			acpu_level->speed.khz);
 	}
+
+	/*-> 20130108 yjw for improving booting speed*/
+        if(cpu0_khz_during_booting)
+        {
+                acpu_level = find_max_acpu_level();
+                cpu0_khz_during_booting = 0;
+        }
+        /*20130108 yjw for improving booting speed <-*/
+
+#if defined(CONFIG_PANTECH_PMIC)
+	dev_err(drv.dev, "CPU%d is running at %lu KHz\n", cpu,
+		acpu_level->speed.khz);
+#endif
 
 	ret = regulator_init(sc, acpu_level);
 	if (ret)
@@ -841,7 +926,23 @@ static void __init cpufreq_table_init(void)
 	for_each_possible_cpu(cpu) {
 		int i, freq_cnt = 0;
 		/* Construct the freq_table tables from acpu_freq_tbl. */
+    #if defined(CONFIG_PANTECH_PMIC)
+    int chargerfreq;
 		for (i = 0; drv.acpu_freq_tbl[i].speed.khz != 0
+				&& freq_cnt < ARRAY_SIZE(*freq_table); i++) {
+            chargerfreq = 0; 
+
+        if (oem_smem_boot_mode_read() || drv.acpu_freq_tbl[i].speed.khz <= 384000) 
+            chargerfreq = 1; 
+        if (drv.acpu_freq_tbl[i].use_for_scaling && chargerfreq) { 
+				freq_table[cpu][freq_cnt].index = freq_cnt;
+				freq_table[cpu][freq_cnt].frequency
+					= drv.acpu_freq_tbl[i].speed.khz;
+				freq_cnt++;
+			}
+		}
+    #else
+    for (i = 0; drv.acpu_freq_tbl[i].speed.khz != 0
 				&& freq_cnt < ARRAY_SIZE(*freq_table); i++) {
 			if (drv.acpu_freq_tbl[i].use_for_scaling) {
 				freq_table[cpu][freq_cnt].index = freq_cnt;
@@ -850,6 +951,7 @@ static void __init cpufreq_table_init(void)
 				freq_cnt++;
 			}
 		}
+    #endif
 		/* freq_table not big enough to store all usable freqs. */
 		BUG_ON(drv.acpu_freq_tbl[i].speed.khz != 0);
 
@@ -923,25 +1025,62 @@ static const int krait_needs_vmin(void)
 
 static void krait_apply_vmin(struct acpu_level *tbl)
 {
-	for (; tbl->speed.khz != 0; tbl++)
+	for (; tbl->speed.khz != 0; tbl++) {
 		if (tbl->vdd_core < 1150000)
 			tbl->vdd_core = 1150000;
+		tbl->avsdscr_setting = 0;
 }
+}
+
+#if defined(PANTECH_ACPUPVS)
+static u32 get_msm_board_revision(void)
+{ 
+    void __iomem *qfprom_base;
+    u32 msm_revision, pte_efuse = 0;
+
+    qfprom_base = ioremap(0x007060e0, SZ_256);
+
+    if (qfprom_base) {
+        pte_efuse = readl_relaxed(qfprom_base + 0);
+        msm_revision = (pte_efuse >> 28) & 0xF;
+    } else {
+        msm_revision = 0;
+    }
+
+    iounmap(qfprom_base);
+
+    return msm_revision; 
+}
+#endif
 
 static int __init select_freq_plan(u32 pte_efuse_phys)
 {
 	void __iomem *pte_efuse;
 	u32 pte_efuse_val, pvs, tbl_idx;
 	char *pvs_names[] = { "Slow", "Nominal", "Fast", "Faster", "Unknown" };
+  
+#ifdef PANTECH_ACPUPVS
+  #ifdef F_PANTECH_SECBOOT
+	uint32_t sec = 0, ste_efuse = 0; 
+  #endif
+	memset(acpupvs, 0x0, sizeof(acpupvs));
+#endif
 
 	pte_efuse = ioremap(pte_efuse_phys, 4);
 	/* Select frequency tables. */
 	if (pte_efuse) {
 		pte_efuse_val = readl_relaxed(pte_efuse);
 		pvs = (pte_efuse_val >> 10) & 0x7;
+#ifdef PANTECH_ACPUPVS
+  #ifdef F_PANTECH_SECBOOT
+		ste_efuse = readl_relaxed(pte_efuse + STE_EFUSE);
+		sec = (ste_efuse_val >> 5) & 0x1;
+  #endif
+#endif
 		iounmap(pte_efuse);
 		if (pvs == 0x7)
 			pvs = (pte_efuse_val >> 13) & 0x7;
+
 
 		switch (pvs) {
 		case 0x0:
@@ -972,6 +1111,64 @@ static int __init select_freq_plan(u32 pte_efuse_phys)
 	} else {
 		dev_info(drv.dev, "ACPU PVS: %s\n", pvs_names[tbl_idx]);
 	}
+
+#if defined(PANTECH_ACPUPVS)
+    memcpy(acpupvs, pvs_names[tbl_idx], 10);
+  #ifdef F_PANTECH_SECBOOT
+    if(sec)
+    {
+        strcat(acpupvs, " SEC");
+    }
+    else
+    {
+        strcat(acpupvs, " NSEC");
+    }
+  #endif
+    if(cpu_is_msm8960() || cpu_is_msm8930())
+    {
+        u32 board_revision = 0;
+        board_revision = get_msm_board_revision();
+
+        if(cpu_is_msm8960())
+        {
+            if (board_revision == 0x7)
+            {
+                strcat(acpupvs, " v3.2.1");
+            }
+            else if (board_revision > 0x7)
+            {
+                strcat(acpupvs, " over_v3.2.1");
+            }
+            else if (board_revision == 0x4)
+            {
+                strcat(acpupvs, " v3.1");
+            }
+            else if (board_revision < 0x4)
+            {
+                strcat(acpupvs, " under_v3.1");
+            }
+            else
+            {
+                strcat(acpupvs, " undef ver");
+            }
+        }
+        else if(cpu_is_msm8930())
+        {
+            if(board_revision == 0x0)
+            {
+                strcat(acpupvs, " v1.1");
+            }
+            else if(board_revision == 0x2)
+            {
+                strcat(acpupvs, " v1.2");
+            }
+            else
+            {
+                strcat(acpupvs, " undef ver");
+            }
+        }
+    } 
+#endif
 
 	return tbl_idx;
 }
@@ -1053,15 +1250,46 @@ static void __init hw_init(void)
 	bus_init(l2_level);
 }
 
+#ifdef PANTECH_ACPUPVS
+static int read_proc_acpu_pvs_info
+(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+    int len = 0;
+    len  = sprintf(page, "ACPU PVS : %s", acpupvs);
+    return len;
+}
+
+static int write_proc_acpu_pvs_info
+(struct file *file, const char *buffer, unsigned long count, void *data)
+{
+    return 0;
+}
+#endif
+
 int __init acpuclk_krait_init(struct device *dev,
 			      const struct acpuclk_krait_params *params)
 {
+#if defined(CONFIG_PANTECH_PMIC)
+	oem_vendor_smem_init();
+#endif	
+
+/*-> 20130108 yjw for improving booting speed*/
+        cpu0_khz_during_booting = 1;
+/*20130108 yjw for improving booting speed <-*/	
+
 	drv_data_init(dev, params);
 	hw_init();
 
 	cpufreq_table_init();
 	acpuclk_register(&acpuclk_krait_data);
 	register_hotcpu_notifier(&acpuclk_cpu_notifier);
-
+#ifdef PANTECH_ACPUPVS
+    acpu_pvs_info = create_proc_entry("acpu_pvs_info", S_IRUGO | S_IWUSR | S_IWGRP, NULL);
+    if (acpu_pvs_info) {
+        acpu_pvs_info->read_proc  = read_proc_acpu_pvs_info;
+        acpu_pvs_info->write_proc = write_proc_acpu_pvs_info;
+        acpu_pvs_info->data       = NULL;
+    }
+#endif
 	return 0;
 }
