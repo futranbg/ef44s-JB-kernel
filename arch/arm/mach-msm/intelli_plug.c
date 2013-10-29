@@ -27,8 +27,8 @@
 #define INTELLI_PLUG_MAJOR_VERSION	1
 #define INTELLI_PLUG_MINOR_VERSION	6
 
-#define DEF_SAMPLING_RATE		(50000)
-#define DEF_SAMPLING_MS			(200)
+#define DEF_SAMPLING_RATE		(100000)
+#define DEF_SAMPLING_MS			(500)
 
 #define DUAL_CORE_PERSISTENCE		15
 #define TRI_CORE_PERSISTENCE		12
@@ -45,7 +45,7 @@ struct delayed_work intelli_plug_work;
 static unsigned int intelli_plug_active = 1;
 module_param(intelli_plug_active, uint, 0644);
 
-static unsigned int eco_mode_active = 0;
+static unsigned int eco_mode_active = 1;
 module_param(eco_mode_active, uint, 0644);
 
 static unsigned int persist_count = 0;
